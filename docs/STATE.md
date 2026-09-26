@@ -13,17 +13,17 @@ Hard-won lessons: [LESSONS.md](LESSONS.md).
 | | |
 |---|---|
 | **Repo** | `D:\py_self\lang_bridge_test` → GitHub `LetPastorSpeakInYourLanguage/lang_recomp` (public, MIT) |
-| **`main`** | A1–A4 merged locally (`0f370d5`); `origin/main` is still `d6d5e7c` — **not pushed** |
-| **Branches** | `feat/cast` (A5: works, cast, banks, cast screen) → `feat/work-package` (A5b: packages, share/import screens, pivot) — each commit verified alone; merge both after the build pass |
+| **`main`** | A1–A5 merged locally (`b1131cb`); worker published to Drive; `origin/main` is still `d6d5e7c` — **not pushed** |
+| **Current branch** | `feat/keep-words` (A6) |
 | **Plan phase** | A1–A5 **done**; next A6 (per-language keep-words), A7 (unknown-language path), then Phase B |
 | **Tests** | 82 pass (`python -m pytest -q tests`); web typecheck + build pass |
 
 ### Next steps, in order
 
-1. Finish the real run on "6 Minute English" (3 episodes, 0:00–2:30, owner's library): load
-   the other two episodes, confirm Neil/Pippa proposals, build banks, export (stems as Opus)
-   and import into the sandbox as "team B" + add Oromo. Then merge `feat/cast` and
-   `feat/work-package` into `main`; `sync_worker` (voice stage + separator fix changed).
+1. Real run done: "6 Minute English" (3 episodes) — Neil linked across 3, Georgie across 2
+   (proposals at 0.93/0.77/0.72, false one at 0.45 → threshold 0.55); banks mix episodes;
+   exported (22 MB, Opus stems) and imported into the sandbox as team B with Oromo added.
+   Not done: machine translation into Oromo in the sandbox (owner stopped that call).
 2. Recurring parts still need a real series with an identical intro (6 Minute English's
    YouTube uploads have varying stings: no shared audio ≥ 3 s, correctly nothing proposed).
 3. Then A6, A7, then Phase B (community server) — see PLAN.md.
