@@ -109,3 +109,11 @@ def test_a_drive_run_shows_its_folder_state_and_its_new_results_come_in_by_thems
     for p in (d / "state.json", d / "log.txt"):
         os.utime(p, (old - 3600, old - 3600))
     assert runs.status("colab", "r1", "old-queue-job")["state"] == "paused"
+
+
+def test_a_run_folder_given_as_the_videos_continues_that_run(tmp_path, monkeypatch):
+    (tmp_path / "manifest.json").write_text("{}")
+    got = []
+    monkeypatch.setattr(research, "run_manifest", lambda d, *a: got.append(d) or {"videos": 0})
+    research.run_folder(str(tmp_path), tmp_path / "out")
+    assert got == [str(tmp_path)]

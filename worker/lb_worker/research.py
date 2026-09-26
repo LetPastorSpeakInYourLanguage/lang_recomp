@@ -143,6 +143,9 @@ def run_folder(videos: str | Path | None, output: str | Path, language: str = "e
     captions / align_captions   for YouTube videos: also take YouTube's captions for the
                first N, and force-align the first M of those, to compare with Whisper
     """
+    if videos and (Path(videos) / "manifest.json").exists():  # a run folder, given as the videos: continue it
+        print(f"{videos} is a run folder: continuing that run")
+        return run_manifest(videos, hf_token, cache)
     _repo_on_path()
     out = Path(output)
     out.mkdir(parents=True, exist_ok=True)
