@@ -201,7 +201,14 @@ Workers download these on first use. **Check each model card before any commerci
 The research comparison in `spikes/voice_bakeoff` can also try Fish Audio S2 Pro
 (research / non-commercial licence) and Seed-VC.
 
-## 7. Responsible use
+## 7. Licence
+
+The code is released under the [MIT licence](LICENSE). It includes
+`worker/lb_worker/align_core.py`, whisperX's forced-alignment functions
+(BSD-2-Clause, © Max Bain), vendored with attribution. Models are downloaded separately
+and keep their own licences (section 6).
+
+## 8. Responsible use
 
 Voice cloning copies a real person's voice. Dub only material you have the right to use,
 and clone voices only with the speakers' consent or where the law and the platform allow
@@ -209,7 +216,7 @@ it. Label dubbed output as AI-generated.
 
 ---
 
-## 8. Development
+## 9. Development
 
 - Dev servers: `python -m app --serve` (API on port 8765) and `npm --prefix web run dev`
   (UI on <http://127.0.0.1:5173>, hot reload, `/api` proxied). Both are defined in
