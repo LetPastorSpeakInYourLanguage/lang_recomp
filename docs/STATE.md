@@ -13,7 +13,7 @@ Hard-won lessons: [LESSONS.md](LESSONS.md).
 | | |
 |---|---|
 | **Repo** | `D:\py_self\lang_bridge_test` → GitHub `LetPastorSpeakInYourLanguage/lang_recomp` (public, MIT) |
-| **`main`** | A1–A5 merged locally (`b1131cb`); worker published to Drive; `origin/main` is still `d6d5e7c` — **not pushed** |
+| **`main`** | A1–A5 + bulk Colab runs merged locally; worker published to Drive; `origin/main` is still `d6d5e7c` — **not pushed** |
 | **Current branch** | `feat/keep-words` (A6) |
 | **Plan phase** | A1–A5 **done**; next A6 (per-language keep-words), A7 (unknown-language path), then Phase B |
 | **Tests** | 82 pass (`python -m pytest -q tests`); web typecheck + build pass |
@@ -26,7 +26,12 @@ Hard-won lessons: [LESSONS.md](LESSONS.md).
    Not done: machine translation into Oromo in the sandbox (owner stopped that call).
 2. Recurring parts still need a real series with an identical intro (6 Minute English's
    YouTube uploads have varying stings: no shared audio ≥ 3 s, correctly nothing proposed).
-3. Then A6, A7, then Phase B (community server) — see PLAN.md.
+3. **Whole-channel Colab run in progress** (owner request): all 458 other "6 Minute English"
+   videos (~48 h of audio) queued as 23 `bulk` batches of 20 on the Colab job folder; the
+   owner runs `lb_worker.ipynb` (Run all) as often as needed — batches resume. Then press
+   "Load N finished" on the series page. **Owner rule: nothing runs or downloads on this
+   PC** — active job folder is Colab again, the local worker was stopped.
+4. Then A6, A7, then Phase B (community server) — see PLAN.md.
 
 ### Working method the owner asked for
 
@@ -65,6 +70,20 @@ work through **job folders** watched by workers (`worker/lb_worker/`):
 
 Test clip project: `camille-interview` (105 s, 28 lines, 2 speakers, all reviewed, 24 dubbed
 + 4 kept original). Export: `data/projects/camille-interview/export/`.
+
+## Bulk Colab runs (app/bulk.py, worker stage `bulk`)
+
+- A series' videos are added without importing (`defer`), queued in batches; the worker
+  downloads each video (≤720p, clip range) into `library/<work uid>/<source uid>/video.mp4`
+  on Drive, then Whisper large-v3 + aligner + pyannote (loaded once per batch); per-video
+  results in the job's `out/<source uid>/` with `done.json`/`error.json`. No separation.
+- The app loads finished videos (`ingest_docs`), pointing `video`/`audio` at the G: file;
+  fingerprints computed on the worker are copied (tiny). `project.stem()` finds stems on
+  Drive (`meta.stems`) or locally; `put_media` references files already under the root.
+- Series page: channel picker "fetch on Colab" + "all"; Colab batch panel (send, load
+  finished, retry failed). Sidebar shows 8 videos per series + "N more".
+- Tests always run against throwaway settings/job folders (`tests/conftest.py`) — one test
+  once queued a job into the real Drive before this existed (removed at once).
 
 ## What A5 added (cast, banks, packages)
 

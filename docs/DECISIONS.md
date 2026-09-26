@@ -33,4 +33,6 @@
 | 29 | A standalone video has its own hidden single-source work (`kind='single'`) | One model for cast, clips and sharing; the UI still says "standalone" |
 | 30 | A **voice bank belongs to the character**: lines cut from all its confirmed appearances into files kept with the work; shipped to voice jobs as files | Better clones across episodes; the voice survives without the media and travels |
 | 31 | Works travel as **`.lbwork`** zips; import matches by uid and never overwrites people's decisions; missing media are re-fetched from the origin and only separated, never re-transcribed | Portable, idempotent, safe |
+| 33 | **Nothing runs or downloads on the owner's PC** for batch work: Colab fetches videos into Drive, the app reads/plays them from G: | Owner rule (2026-09-26) |
+| 34 | Whole channels run as **`bulk` batches** (~20 videos/job, models loaded once, per-video checkpoints); **no separation** in batches — only for videos being dubbed | Drive overhead, T4 time, resumability |
 | 32 | Package media default: voice stems as Opus (none / FLAC optional); settings (aligners) are reported, never written on import | Size vs. re-separation cost; the receiver's machine is theirs |
