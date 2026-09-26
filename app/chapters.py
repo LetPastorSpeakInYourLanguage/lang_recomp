@@ -71,7 +71,9 @@ def toggle(pid: str, sid: int) -> dict:
             raise ValueError("the first line always opens the first chapter")
         db.run("DELETE FROM chapters WHERE project_id=? AND id=?", pid, s["chapter"])
         return {"removed": s["chapter"]}
-    new_id = max(c["id"] for c in chs) + 1
+    # never reuse an id, even of a removed chapter: work may still point at it
+    new_id = max(max(c["id"] for c in chs), db.meta(pid).get("chapter_seq", 0)) + 1
+    db.set_meta(pid, chapter_seq=new_id)
     db.run("INSERT INTO chapters (project_id,id,start,title,updated) VALUES (?,?,?,'',?)",
            pid, new_id, s["start"], time.time())
     return {"added": new_id}

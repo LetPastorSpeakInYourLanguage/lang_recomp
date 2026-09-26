@@ -80,6 +80,9 @@ def test_ids_are_stable_and_titles_stick(fresh):
     chs = chapters.listing(pid)
     assert [(c["id"], c["title"], c["index"]) for c in chs] == [(1, "", 0), (b, "Goodbyes", 1)]
     assert a not in {c["id"] for c in chs}
+    chapters.toggle(pid, 3)
+    chapters.toggle(pid, 3)  # removed again: the next new chapter still gets a fresh id
+    assert chapters.toggle(pid, 2)["added"] == b + 2
 
 
 def test_translation_context_stops_at_chapters(fresh, monkeypatch):
