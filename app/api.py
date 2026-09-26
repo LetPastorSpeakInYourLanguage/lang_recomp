@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import zipfile
 from pathlib import Path
 
 import numpy as np
@@ -12,7 +13,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import aligners, banks, cast, chapters, db, feeds, langs, library, mix, project, recurring, series, settings, tasks, voice
+from . import aligners, banks, cast, chapters, db, feeds, langs, library, mix, package, project, recurring, series, settings, tasks, voice
 
 app = FastAPI(title="Lang-Bridge")
 WEB = Path(__file__).resolve().parents[1] / "web" / "dist"
@@ -1040,6 +1041,75 @@ def mix_open(pid: str):
     d.mkdir(exist_ok=True)
     os.startfile(d)  # noqa: S606 - local desktop action on the app's own folder
     return {"ok": True}
+
+
+# ---- sharing a work (docs/PACKAGE.md) ------------------------------------------------------
+class ExportReq(BaseModel):
+    langs: list[str] | None = None  # none = every target language of the work
+    media: str = "opus"             # none | opus | flac
+    takes: bool = False
+    note: str = ""
+
+
+@app.post("/api/series/{sid}/export")
+def export_work(sid: str, body: ExportReq):
+    """Write the work as a .lbwork package another team can import (data/exports/)."""
+    _s(sid)
+    try:
+        f = package.export(sid, body.langs, body.media, body.takes, body.note)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"name": f.name, "path": str(f), "size": f.stat().st_size}
+
+
+def _export_file(name: str) -> Path:
+    f = db.DATA / "exports" / Path(name).name  # a bare file name: never a path out of the folder
+    if f.suffix != ".lbwork" or not f.exists():
+        raise HTTPException(404, "no such package")
+    return f
+
+
+@app.get("/api/exports/{name}")
+def download_export(name: str):
+    return FileResponse(_export_file(name), filename=Path(name).name, media_type="application/zip")
+
+
+@app.post("/api/exports/open")
+def open_exports():
+    """Show the packages folder in Explorer (this app only ever runs on the user's PC)."""
+    d = db.DATA / "exports"
+    d.mkdir(parents=True, exist_ok=True)
+    os.startfile(d)  # noqa: S606 - local desktop action on the app's own folder
+    return {"ok": True}
+
+
+class PackagePath(BaseModel):
+    path: str
+    fetch: bool = True  # fetch missing video/stems from the origin
+
+
+def _package_path(p: str) -> Path:
+    f = Path(p.strip().strip('"'))
+    if f.suffix.lower() != ".lbwork" or not f.is_file():
+        raise HTTPException(400, "give the path of a .lbwork file on this PC")
+    return f
+
+
+@app.post("/api/import/inspect")
+def inspect_package(body: PackagePath):
+    try:
+        return package.inspect(_package_path(body.path))
+    except (ValueError, KeyError, zipfile.BadZipFile) as e:
+        raise HTTPException(400, f"not a readable work package: {e}")
+
+
+@app.post("/api/import")
+def import_package(body: PackagePath):
+    """Bring a shared work in (new, or adding to the same work already here)."""
+    try:
+        return package.import_work(_package_path(body.path), fetch=body.fetch)
+    except (ValueError, KeyError, zipfile.BadZipFile) as e:
+        raise HTTPException(400, f"could not import: {e}")
 
 
 # ---- static UI ---------------------------------------------------------------------------

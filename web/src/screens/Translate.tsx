@@ -11,6 +11,11 @@ const addressesSomeone = (en: string) => /\byou(r|rs|rself)?\b/i.test(en);
 export default function Translate({ project, state, onChanged }: { project: Project; state: AppState | null; onChanged: () => void }) {
   const [lang, setLang] = useLang(project);
   const sents = usePoll(() => api.sentences(project.id, lang), [project.id, lang]);
+  // Another language shown under each source line as a reference (a pivot): e.g. the
+  // Amharic while translating into Tigrinya, when the team reads Amharic better than English.
+  const [pivot, setPivot] = useState<string>("");
+  const piv = usePoll(() => (pivot ? api.sentences(project.id, pivot) : Promise.resolve([])), [project.id, pivot]);
+  const pivotOf = useMemo(() => Object.fromEntries((piv.data ?? []).map((s) => [s.id, s.tr])), [piv.data]);
   const chars = usePoll(() => api.characters(project.id), [project.id]);
   const chaps = usePoll(() => api.chapters(project.id), [project.id]);
   const rows = sents.data ?? [];
@@ -48,7 +53,18 @@ export default function Translate({ project, state, onChanged }: { project: Proj
 
   return (
     <div className="p-16 max-w-[1280px] mx-auto w-full flex flex-col gap-12">
-      <LangBar project={project} lang={lang} onChange={setLang} onAdded={onChanged} counts={project.counts.translated_by_lang} />
+      <div className="flex items-center gap-10 flex-wrap">
+        <div className="flex-1"><LangBar project={project} lang={lang} onChange={setLang} onAdded={onChanged} counts={project.counts.translated_by_lang} /></div>
+        {project.targets.length > 1 && (
+          <label className="flex items-center gap-5 text-11 text-dim" title="Show another language's translation under each source line, as a reference">
+            Reference
+            <select className="field" value={pivot} onChange={(e) => setPivot(e.target.value)}>
+              <option value="">none</option>
+              {project.targets.filter((t) => t !== lang).map((t) => <option key={t} value={t}>{t} · {langName(t)}</option>)}
+            </select>
+          </label>
+        )}
+      </div>
       <div className="flex items-center gap-10 flex-wrap">
         <div className="flex-1 min-w-[300px]">
           <div className="text-15 font-semibold">{langName(project.src_lang)} → {langName(lang)}</div>
@@ -69,7 +85,8 @@ export default function Translate({ project, state, onChanged }: { project: Proj
         <Panel key={c.id} title={`Chapter ${c.index + 1}${c.title ? ` · ${c.title}` : ""} · ${lines.length} lines`}
           actions={<Button variant="ghost" disabled={running} onClick={() => void translate(c.id)}><RefreshCw size={11} />Re-translate chapter</Button>}>
           <div className="divide-y divide-border">
-            {lines.map((s) => <Line key={s.id} s={s} c={s.speaker ? byLabel[s.speaker] : undefined} project={project} lang={lang} onPatch={(b) => void patch(s, b)} />)}
+            {lines.map((s) => <Line key={s.id} s={s} c={s.speaker ? byLabel[s.speaker] : undefined} project={project} lang={lang}
+              pivot={pivot ? { lang: pivot, text: pivotOf[s.id] ?? "" } : null} onPatch={(b) => void patch(s, b)} />)}
           </div>
         </Panel>
       ))}
@@ -77,8 +94,9 @@ export default function Translate({ project, state, onChanged }: { project: Proj
   );
 }
 
-function Line({ s, c, project, lang, onPatch }: {
-  s: Sentence; c?: Character; project: Project; lang: string; onPatch: (b: Parameters<typeof api.patchSentence>[2]) => void;
+function Line({ s, c, project, lang, pivot, onPatch }: {
+  s: Sentence; c?: Character; project: Project; lang: string; pivot: { lang: string; text: string } | null;
+  onPatch: (b: Parameters<typeof api.patchSentence>[2]) => void;
 }) {
   const [draft, setDraft] = useState(s.tr);
   useEffect(() => setDraft(s.tr), [s.tr]);
@@ -93,6 +111,8 @@ function Line({ s, c, project, lang, onPatch }: {
       </div>
       <div className="flex flex-col gap-4 pt-2">
         <div className="text-12 leading-relaxed text-dim">{s.text}</div>
+        {pivot && <div lang={pivot.lang} className="font-eth text-12.5 leading-relaxed text-cross" title={`${langName(pivot.lang)} (reference)`}>
+          {pivot.text || <span className="text-faint">— no {langName(pivot.lang)} yet</span>}</div>}
         <ModeToggle mode={s.mode} set={s.mode_set} suggested={s.mode_suggested} onChange={(m) => onPatch({ mode: m })} />
       </div>
       <div className={`flex flex-col gap-4 ${s.mode === "keep" ? "opacity-45" : ""}`}

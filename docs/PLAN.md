@@ -53,13 +53,10 @@ and `set_translation`).
    `C` key kept; titles editable in Transcript. `source_id` arrives with A4. No chapter
    `status` column: per-language task status lives on chapter tasks (Phase B).
 4. ✅ **Series, the team library and reusable parts** (approved 2026-09-26) — see
-   [A4 in detail](#a4-in-detail) below. Still to do with the owner: the end-to-end run on a
-   real playlist whose videos share an intro (so far proven on the synthetic sandbox).
-5. 🔜 **Cross-source characters** — characters at series level; `appearances(source_id,
-   diarization_label, character_id, confidence, confirmed_by)`; match by diarization centroids
-   (`diarization.json → centroids`) and WavLM x-vectors of voice banks (see
-   `worker/lb_worker/tts/score.py`); **Series cast** screen to accept/reject/new; voice banks
-   grow across episodes.
+   [A4 in detail](#a4-in-detail) below. Still to do: a real series whose videos share an
+   identical intro (6 Minute English's YouTube uploads turned out not to — their stings vary).
+5. ✅ **Characters belong to the work; works travel** (approved 2026-09-26) — see
+   [A5 in detail](#a5-in-detail).
 6. ⬜ **Per-language keep-words** (`app/interjections.py`).
 7. ⬜ **Unknown-language path** — VAD-only segmentation (`asr` stage `params.transcribe=false`)
    → empty lines for manual transcription; optional MMS/Omnilingual drafts (provenance machine).
@@ -106,6 +103,24 @@ raw`), sliding Hamming match, pairwise "find repeating parts" (Jellyfin Intro Sk
 → proposed occurrences, confirm UI; (5) reuse in dubbing — lines inside a confirmed occurrence
 are **linked**, skipped by Translate/Voice, and `mix.render` places the origin source's chosen
 takes shifted by the offset; (6) docs.
+
+### A5 in detail
+
+Three layers: **work** (language-neutral, travels), **language** (per target, travels when
+chosen), **local** (paths, jobs, workers, settings — never travels). Every portable row has a
+`uid`. Built:
+- Every source belongs to a work; a standalone video has a hidden `series(kind='single')`.
+- `cast` (work-level characters: name, gender, role, notes, important, per-language names in
+  `cast_names`), `appearances(source_id, label, character_uid, status proposed|confirmed,
+  score, talk_s)`. Voice matching by pyannote centroids (`MATCH = 0.45`; different voices
+  ≈0.1): proposals only. `auto` characters (never edited) disappear when unused.
+- `cast_bank`: a character's voice bank cut from all its confirmed appearances into
+  `data/works/<work uid>/cast/<char uid>/`; voice jobs ship it as files (worker accepts
+  `bank_file`/`heldout_files`, spans still work).
+- Cast screen, Characters screen proposals, Share screen, "Open a shared work" on Home.
+- `.lbwork` packages (`app/package.py`, format in [PACKAGE.md](PACKAGE.md)); import by uid,
+  manual truth, re-fetch of missing media (separation only, never re-transcription).
+- Translate shows another language as a reference (pivot).
 
 ## Phase B — community server MVP (invited teams) ⬜
 

@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 
-/** Hash routes: #/ · #/clips[/<series>] · #/cast/<work> · #/s/<series> · #/p/<project>/<screen>. Hash routing keeps the static build
+/** Hash routes: #/ · #/clips[/<series>] · #/cast/<work> · #/share/<work> · #/s/<series> · #/p/<project>/<screen>. Hash routing keeps the static build
  *  servable by FastAPI's StaticFiles with no server-side fallback. */
 export type Screen = "overview" | "characters" | "transcript" | "translate" | "voice" | "mix";
-export interface Route { project: string | null; screen: Screen; settings?: boolean; series?: string; clips?: { series: string | null }; cast?: string }
+export interface Route { project: string | null; screen: Screen; settings?: boolean; series?: string; clips?: { series: string | null }; cast?: string; share?: string }
 
 function parse(): Route {
   if (location.hash.startsWith("#/settings")) return { project: null, screen: "overview", settings: true };
+  const sh = location.hash.match(/^#\/share\/([^/]+)/);
+  if (sh) return { project: null, screen: "overview", share: decodeURIComponent(sh[1]) };
   const k = location.hash.match(/^#\/cast\/([^/]+)/);
   if (k) return { project: null, screen: "overview", cast: decodeURIComponent(k[1]) };
   const c = location.hash.match(/^#\/clips(?:\/([^/]+))?/);
@@ -26,6 +28,10 @@ export function useRoute(): Route {
     return () => window.removeEventListener("hashchange", on);
   }, []);
   return r;
+}
+
+export function goShare(work: string) {
+  location.hash = `#/share/${encodeURIComponent(work)}`;
 }
 
 export function goCast(work: string) {

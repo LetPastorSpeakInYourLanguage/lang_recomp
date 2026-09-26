@@ -1,7 +1,7 @@
-import { Check, GitMerge, Library, Plus, RefreshCw, Star, Users, X } from "lucide-react";
+import { Check, GitMerge, Library, Plus, RefreshCw, Share2, Star, Users, X } from "lucide-react";
 import { useState } from "react";
 import { api, fmtTime, usePoll, type CastMember } from "../api";
-import { go, goSeries } from "../router";
+import { go, goSeries, goShare } from "../router";
 import { langName, useLangNames } from "../shell/LangBar";
 import { Button, Empty, Panel, PlayButton, Segmented, SpeakerDot, Tag } from "../ui";
 
@@ -32,6 +32,7 @@ export default function Cast({ id }: { id: string }) {
         </div>
         {proposed > 0 && <Tag tone="warn">{proposed} to confirm</Tag>}
         {w.kind !== "single" && <Button onClick={() => goSeries(id)}><Library size={12} />{w.name}</Button>}
+        <Button onClick={() => goShare(id)}><Share2 size={12} />Share</Button>
       </div>
       {!people.length && <Empty icon={<Users size={26} />} title="No characters yet">They appear when a {w.unit}'s analysis results are loaded.</Empty>}
       {people.map((c) => <Member key={c.uid} c={c} all={people} targets={w.targets} onChanged={reload} />)}
