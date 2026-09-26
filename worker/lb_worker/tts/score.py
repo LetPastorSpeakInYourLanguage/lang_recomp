@@ -6,7 +6,8 @@ manifest: {"speakers": {spk: [heldout wav, ...]},
            "items": [{"key", "wav", "speaker", "text", "slot_s", "source_wav"}]}
 
   sim      cosine(WavLM-SV x-vector of output, centroid of the speaker's held-out clips)
-  cer      Amharic CER of a CTC back-transcription against the intended text
+  cer      character error rate of a CTC back-transcription against the intended text
+           (any language's CTC model via --asr; "--asr none" skips it)
   dur      output seconds / source slot seconds
   av_dist  distance in (arousal, valence) between the source clip and the output
 """
@@ -57,11 +58,13 @@ for spk, wavs in m["speakers"].items():
     c = torch.stack([xvec(w) for w in wavs]).mean(0)
     centroids[spk] = torch.nn.functional.normalize(c, dim=-1)
 
-# ---- Amharic back-transcription -----------------------------------------------------------
+# ---- back-transcription (the language's CTC model) ----------------------------------------
 from transformers import AutoModelForCTC, AutoProcessor  # noqa: E402
 
-proc = AutoProcessor.from_pretrained(a.asr)
-ctc = AutoModelForCTC.from_pretrained(a.asr).to(dev).eval()
+proc = ctc = None
+if a.asr and a.asr.lower() != "none":
+    proc = AutoProcessor.from_pretrained(a.asr)
+    ctc = AutoModelForCTC.from_pretrained(a.asr).to(dev).eval()
 
 
 @torch.no_grad()
@@ -140,9 +143,10 @@ for it in m["items"]:
         r["dur_s"] = round(info.duration, 2)
         r["dur"] = round(info.duration / it["slot_s"], 2) if it.get("slot_s") else None
         r["sim"] = round(float(xvec(it["wav"]) @ centroids[it["speaker"]]), 3)
-        hyp = transcribe(it["wav"])
-        r["asr"] = hyp
-        r["cer"] = round(cer(it["text"], hyp), 3)
+        if ctc is not None:
+            hyp = transcribe(it["wav"])
+            r["asr"] = hyp
+            r["cer"] = round(cer(it["text"], hyp), 3)
         if av_model is not None and it.get("source_wav"):
             src = out["sources"].setdefault(it["source_wav"], av(it["source_wav"]))
             o = av(it["wav"])

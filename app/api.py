@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import aligners, db, mix, project, settings, tasks, voice
+from . import aligners, db, langs, mix, project, settings, tasks, voice
 
 app = FastAPI(title="Lang-Bridge")
 WEB = Path(__file__).resolve().parents[1] / "web" / "dist"
@@ -266,38 +266,68 @@ def merge_characters(pid: str, body: Merge):
     return {"ok": True}
 
 
+# ---- languages ---------------------------------------------------------------------------
+@app.get("/api/languages")
+def languages():
+    return langs.catalogue()
+
+
+class LangReq(BaseModel):
+    lang: str
+
+
+@app.post("/api/projects/{pid}/languages")
+def add_language(pid: str, body: LangReq):
+    _p(pid)
+    try:
+        return {"targets": project.add_target(pid, body.lang)}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 # ---- transcript / translation ------------------------------------------------------------
 @app.get("/api/projects/{pid}/sentences")
-def sentences(pid: str):
+def sentences(pid: str, lang: str | None = None):
     _p(pid)
-    return project.sentences(pid)
+    return project.sentences(pid, lang)
 
 
 class SentPatch(BaseModel):
     text: str | None = None
     speaker: str | None = None
-    am: str | None = None
-    am_locked: bool | None = None
     chapter_break: bool | None = None
     reviewed: bool | None = None
     mode: str | None = None  # "dub" | "keep" | "auto" (back to the suggestion)
+    # the translation into `lang` (default: the primary target language)
+    lang: str | None = None
+    tr: str | None = None
+    tr_locked: bool | None = None
+
+
+LINE_FIELDS = ("text", "speaker", "chapter_break", "reviewed", "mode")
 
 
 @app.patch("/api/projects/{pid}/sentences/{sid}")
 def patch_sentence(pid: str, sid: int, body: SentPatch):
+    _p(pid)
     changes = body.model_dump(exclude_none=True)
+    lang = project.lang_or_primary(pid, changes.pop("lang", None))
     if "mode" in changes:
         if changes["mode"] not in ("dub", "keep", "auto"):
             raise HTTPException(400, "mode must be dub, keep or auto")
         if changes["mode"] == "auto":
-            changes["mode"] = None
-            db.run("UPDATE sentences SET mode=NULL WHERE project_id=? AND id=?", pid, sid)
             changes.pop("mode")
-    if "am" in changes and "am_locked" not in changes:
-        changes["am_locked"] = True  # a hand edit is never overwritten by re-translation
-    for k, v in changes.items():
-        db.run(f"UPDATE sentences SET {k}=? WHERE project_id=? AND id=?", int(v) if isinstance(v, bool) else v, pid, sid)
-    return next(s for s in project.sentences(pid) if s["id"] == sid)
+            db.run("UPDATE sentences SET mode=NULL WHERE project_id=? AND id=?", pid, sid)
+    if "tr" in changes or "tr_locked" in changes:
+        text = changes.pop("tr", None)
+        # A hand edit locks the line, so re-translating never overwrites it.
+        locked = changes.pop("tr_locked", True if text is not None else None)
+        project.set_translation(pid, sid, lang, text, locked, provenance="human")
+    for k in LINE_FIELDS:
+        if k in changes:
+            v = changes[k]
+            db.run(f"UPDATE sentences SET {k}=? WHERE project_id=? AND id=?", int(v) if isinstance(v, bool) else v, pid, sid)
+    return next(x for x in project.sentences(pid, lang) if x["id"] == sid)
 
 
 @app.post("/api/projects/{pid}/sentences/{sid}/merge_next")
@@ -325,6 +355,7 @@ def split_sentence(pid: str, sid: int, body: SplitReq):
 class TranslateReq(BaseModel):
     chapter: int | None = None
     force: bool = False
+    lang: str | None = None
 
 
 @app.post("/api/projects/{pid}/translate")
@@ -332,7 +363,7 @@ def translate(pid: str, body: TranslateReq):
     _p(pid)
     if tasks.busy(pid, "translate"):
         raise HTTPException(409, "translation already running")
-    return {"task": project.translate(pid, body.chapter, body.force)}
+    return {"task": project.translate(pid, body.lang, body.chapter, body.force)}
 
 
 # ---- voice -------------------------------------------------------------------------------
@@ -340,33 +371,35 @@ class VoiceReq(BaseModel):
     root: str | None = None
     ids: list[int] | None = None
     takes: int | None = None
+    lang: str | None = None
 
 
 @app.post("/api/projects/{pid}/voice")
 def voice_queue(pid: str, body: VoiceReq):
     _p(pid)
     try:
-        return voice.queue(pid, body.root, body.ids, body.takes)
+        return voice.queue(pid, body.root, body.ids, body.takes, body.lang)
     except (RuntimeError, OSError) as e:
         raise HTTPException(409, str(e))
 
 
 @app.get("/api/projects/{pid}/voice")
-def voice_state(pid: str):
-    """Lines with their takes; loads any newly finished voice jobs first."""
+def voice_state(pid: str, lang: str | None = None):
+    """Lines with their takes in ``lang``; loads any newly finished voice jobs first."""
     _p(pid)
+    lang = project.lang_or_primary(pid, lang)
     try:
         voice.ingest(pid)
     except OSError:
         pass  # a job folder may be offline; show what is loaded
     takes: dict[int, list] = {}
-    for t in voice.lines_takes(pid):
+    for t in voice.lines_takes(pid, lang=lang):
         takes.setdefault(t["sentence_id"], []).append(t)
-    lines = project.sentences(pid)
-    for s in lines:
-        s["takes"] = [t | {"stale": t["text"] != s["am"]} for t in takes.get(s["id"], [])]
+    lines = project.sentences(pid, lang)
+    for x in lines:
+        x["takes"] = [t | {"stale": t["text"] != x["tr"]} for t in takes.get(x["id"], [])]
     jobs = [j for j in project.jobs(pid) if j["stage"] == "voice"]
-    return {"lines": lines, "jobs": jobs, "engine": voice.ENGINE, "am_rate": db.meta(pid).get("am_rate")}
+    return {"lang": lang, "lines": lines, "jobs": jobs, "engine": voice.ENGINE, "rate": project.rate(pid, lang)}
 
 
 class ChooseReq(BaseModel):
@@ -392,16 +425,22 @@ def take_audio(pid: str, take_id: int):
 
 # ---- mix & export ------------------------------------------------------------------------
 @app.get("/api/projects/{pid}/mix")
-def mix_state(pid: str):
+def mix_state(pid: str, lang: str | None = None):
     _p(pid)
-    d = mix.mix_dir(pid)
+    lang = project.lang_or_primary(pid, lang)
+    d = mix.mix_dir(pid, lang)
     fitp = d / "fit.json"
     summary = json.loads(fitp.read_text(encoding="utf-8")) if fitp.exists() else None
+    for line in (summary or {}).get("lines", []):  # renders from before languages were data
+        line.setdefault("tr", line.get("am", ""))
+        line.setdefault("src", line.get("en", ""))
     meta = db.meta(pid)
-    exp = meta.get("exported")
-    return {"params": mix.params(pid), "defaults": mix.DEFAULTS, "summary": summary,
+    exp = (meta.get("exports") or {}).get(lang)
+    if not exp and meta.get("exported") and lang == project.get(pid)["tgt_lang"]:
+        exp = {"mp4": meta["exported"], "at": meta.get("exported_at")}
+    return {"lang": lang, "params": mix.params(pid), "defaults": mix.DEFAULTS, "summary": summary,
             "has_mix": (d / "mix.wav").exists(), "mix_mtime": (d / "mix.wav").stat().st_mtime if (d / "mix.wav").exists() else None,
-            "export": {"mp4": exp, "at": meta.get("exported_at")} if exp and Path(exp).exists() else None,
+            "export": exp if exp and Path(exp["mp4"]).exists() else None,
             "tasks": [t for t in tasks.list_for(pid) if t["kind"] in ("mix", "export")][:4]}
 
 
@@ -411,25 +450,31 @@ def mix_params(pid: str, body: dict):
     return mix.set_params(pid, body)
 
 
+class LangOnly(BaseModel):
+    lang: str | None = None
+
+
 @app.post("/api/projects/{pid}/mix/render")
-def mix_render(pid: str):
+def mix_render(pid: str, body: LangOnly | None = None):
     _p(pid)
     if tasks.busy(pid, "mix"):
         raise HTTPException(409, "already rendering")
-    return {"task": tasks.start(pid, "mix", lambda update: mix.render(pid, update))}
+    lang = project.lang_or_primary(pid, body.lang if body else None)
+    return {"task": tasks.start(pid, "mix", lambda update: mix.render(pid, lang, update))}
 
 
 @app.post("/api/projects/{pid}/mix/export")
-def mix_export(pid: str):
+def mix_export(pid: str, body: LangOnly | None = None):
     _p(pid)
     if tasks.busy(pid, "export"):
         raise HTTPException(409, "already exporting")
-    return {"task": tasks.start(pid, "export", lambda update: mix.export(pid, update))}
+    lang = project.lang_or_primary(pid, body.lang if body else None)
+    return {"task": tasks.start(pid, "export", lambda update: mix.export(pid, lang, update))}
 
 
 @app.get("/api/projects/{pid}/mix/audio/{name}")
-def mix_audio(pid: str, name: str):
-    f = mix.mix_dir(pid) / f"{name}.wav"
+def mix_audio(pid: str, name: str, lang: str | None = None):
+    f = mix.mix_dir(pid, lang) / f"{name}.wav"
     if name not in ("mix", "dub") or not f.exists():
         raise HTTPException(404, "not rendered yet")
     return FileResponse(f, media_type="audio/wav", headers={"Cache-Control": "no-store"})

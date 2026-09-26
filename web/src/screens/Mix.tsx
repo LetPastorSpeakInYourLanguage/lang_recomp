@@ -2,6 +2,7 @@ import { Clapperboard, Download, FolderOpen, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, fmtTime, usePoll, type FitLine, type MixParams, type Project } from "../api";
 import { go } from "../router";
+import LangBar, { langName, useLang } from "../shell/LangBar";
 import { Button, Empty, Panel, Progress, Segmented, Tag, stateTone } from "../ui";
 
 type Listen = "mix" | "dub" | "original";
@@ -13,8 +14,9 @@ const STATUS: Record<FitLine["status"], { tone: "good" | "accent" | "warn" | "ba
   overflow: { tone: "bad", label: "overflows", help: "Still too long at the hard limit: it overlaps the next line. Shorten the translation or regenerate." },
 };
 
-export default function Mix({ project }: { project: Project }) {
-  const m = usePoll(() => api.mix(project.id), [project.id], 3000);
+export default function Mix({ project, onChanged }: { project: Project; onChanged: () => void }) {
+  const [lang, setLang] = useLang(project);
+  const m = usePoll(() => api.mix(project.id, lang), [project.id, lang], 3000);
   const [listen, setListen] = useState<Listen>("mix");
   const [issuesOnly, setIssuesOnly] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -45,7 +47,7 @@ export default function Mix({ project }: { project: Project }) {
 
   const rows = useMemo(() => (data?.summary?.lines ?? []).filter((l) => !issuesOnly || l.status === "squeezed" || l.status === "overflow"), [data, issuesOnly]);
 
-  if (!data) return null;
+  if (!data) return <div className="p-16 text-11.5 text-faint">Loading…</div>;
   const p = data.params;
   const c = data.summary?.counts ?? {};
 
@@ -61,9 +63,10 @@ export default function Mix({ project }: { project: Project }) {
 
   return (
     <div className="p-16 max-w-[1280px] mx-auto w-full flex flex-col gap-12">
+      <LangBar project={project} lang={lang} onChange={setLang} onAdded={onChanged} />
       <div className="flex items-center gap-10 flex-wrap">
         <div className="flex-1 min-w-[300px]">
-          <div className="text-15 font-semibold">Mix & export</div>
+          <div className="text-15 font-semibold">Mix & export · {langName(lang)}</div>
           <div className="text-11.5 text-dim">
             Each chosen take starts where the original line started. A take that runs long first uses the pause after it, then is sped up
             gently (voice character kept); lines that still do not fit are flagged below. Loudness follows the original line.
@@ -85,22 +88,22 @@ export default function Mix({ project }: { project: Project }) {
         <Panel>
           <Empty icon={<Clapperboard size={28} />} title="No mix yet">
             Render the mix to hear the dub over the background. Lines without a chosen take keep the original voice, so you can render at any point.
-            <div className="mt-10"><Button variant="primary" onClick={() => void run(() => api.renderMix(project.id))}><RefreshCw size={12} />Render mix</Button></div>
+            <div className="mt-10"><Button variant="primary" onClick={() => void run(() => api.renderMix(project.id, lang))}><RefreshCw size={12} />Render mix</Button></div>
           </Empty>
         </Panel>
       ) : (
         <div className="grid grid-cols-[minmax(0,1.3fr)_minmax(280px,1fr)] gap-12 max-lg:grid-cols-1">
           <Panel title="Preview" actions={<Segmented<Listen> value={listen} onChange={setListen}
-            options={[{ value: "mix", label: "Amharic mix" }, { value: "dub", label: "Dub only" }, { value: "original", label: "Original" }]} />}>
+            options={[{ value: "mix", label: `${langName(lang)} mix` }, { value: "dub", label: "Dub only" }, { value: "original", label: "Original" }]} />}>
             <div className="p-10">
               <video ref={video} src={api.media(project.id, "video")} controls className="w-full rounded-3 bg-black aspect-video" />
-              <audio ref={audio} src={api.mixAudio(project.id, listen === "dub" ? "dub" : "mix", data.mix_mtime)} preload="auto" />
+              <audio ref={audio} src={api.mixAudio(project.id, listen === "dub" ? "dub" : "mix", data.mix_mtime, lang)} preload="auto" />
               <div className="text-10.5 text-faint mt-6">Click a line below to jump there.</div>
             </div>
           </Panel>
 
           <Panel title="Mix settings" actions={
-            <Button variant="primary" disabled={!!rendering} onClick={() => void run(() => api.renderMix(project.id))}>
+            <Button variant="primary" disabled={!!rendering} onClick={() => void run(() => api.renderMix(project.id, lang))}>
               <RefreshCw size={12} className={rendering ? "animate-spin" : ""} />{rendering ? "Rendering…" : "Render mix"}
             </Button>}>
             <div className="p-12 flex flex-col gap-10 text-11.5">
@@ -139,7 +142,7 @@ export default function Mix({ project }: { project: Project }) {
                 return (
                   <tr key={l.id} onClick={() => seek(l.start)} className="border-b border-border last:border-0 cursor-pointer hover:bg-panel2 align-top">
                     <td className="px-10 py-5 font-mono text-dim">{fmtTime(l.slot_start)}</td>
-                    <td className="px-10 py-5 max-w-[460px]"><div className="font-eth text-12.5">{l.am}</div><div className="text-10.5 text-faint truncate">{l.en}</div></td>
+                    <td className="px-10 py-5 max-w-[460px]"><div className="font-eth text-12.5">{l.tr}</div><div className="text-10.5 text-faint truncate">{l.src}</div></td>
                     <td className="px-10 py-5 font-mono">{l.dur.toFixed(1)}s<span className="text-faint"> / {(l.slot_end - l.slot_start).toFixed(1)}s</span></td>
                     <td className="px-10 py-5 font-mono text-dim">{fmtTime(l.start)}–{fmtTime(l.end)}</td>
                     <td className="px-10 py-5 font-mono">{l.factor > 1.001 ? `+${Math.round((l.factor - 1) * 100)}%` : "–"}</td>
@@ -161,11 +164,11 @@ export default function Mix({ project }: { project: Project }) {
 
       <Panel title="Export">
         <div className="p-12 flex items-center gap-10 flex-wrap text-11.5">
-          <Button variant="primary" disabled={!data.has_mix || !!exporting || !!rendering} onClick={() => void run(() => api.exportMix(project.id))}>
+          <Button variant="primary" disabled={!data.has_mix || !!exporting || !!rendering} onClick={() => void run(() => api.exportMix(project.id, lang))}>
             <Download size={12} />{exporting ? "Exporting…" : "Export MP4"}
           </Button>
           <span className="text-dim flex-1 min-w-[260px]">
-            Video + Amharic dub (default audio) + original audio as a second track + Amharic and English subtitle tracks, and .srt files.
+            Video + {langName(lang)} dub (default audio) + original audio as a second track + {langName(lang)} and {langName(project.src_lang)} subtitle tracks, and .srt files.
           </span>
           {data.export && (
             <>

@@ -1,0 +1,110 @@
+# STATE — where the build is right now
+
+The working memory of this project. Read this first when picking the work up.
+Plan: [PLAN.md](PLAN.md). Decisions and why: [DECISIONS.md](DECISIONS.md).
+Hard-won lessons: [LESSONS.md](LESSONS.md).
+
+**Last updated:** 2026-09-26
+
+---
+
+## Where we are
+
+| | |
+|---|---|
+| **Repo** | `D:\py_self\lang_bridge_test` → GitHub `LetPastorSpeakInYourLanguage/lang_recomp` (public, MIT) |
+| **`main`** | `d6d5e7c` — v1 app + README + LICENSE, pushed |
+| **Current branch** | `feat/languages-as-data` — 4 commits (+ this docs commit), **each verified alone**, not merged, not pushed |
+| **Plan phase** | A1 (languages as data) and A2 (length per script) **done**; next **A3** (chapters as entities) |
+| **Tests** | 39 pass (`python -m pytest -q tests`); web typecheck + build pass |
+
+### Next steps, in order
+
+1. On `feat/languages-as-data`: run the full main-build pass (below), then
+   `git checkout main && git merge --no-ff feat/languages-as-data`, run the pass again on
+   `main`. Push only when the owner says so.
+2. New branch `feat/chapters` → Phase A3, then `feat/series` (A4), `feat/cast-linking` (A5),
+   A6, A7, then Phase B (community server) — see PLAN.md.
+
+### Working method the owner asked for
+
+- **Work in branches, commit step by step, merge when a phase is done.**
+- **Check every commit on its own**: `bash scripts/check_commit.sh` (add `web` when the
+  frontend changed) stashes uncommitted work, runs compile + pytest (+ tsc + vite build),
+  restores. A commit that fails is fixed before the next one.
+- **"Main builds" pass** before/after merging, one at a time:
+  1. `python -m pytest -q tests`
+  2. `cd web && npx tsc --noEmit && npm run build`
+  3. worker imports: `python -c "import sys; sys.path.insert(0,'worker'); import lb_worker.stages"`
+  4. start the app (`.claude/launch.json` → `api` + `web`, or `python -m app --serve`) and
+     check screens in the browser pane (Translate, Voice, Mix with real data)
+  5. `python scripts/sync_worker.py --root "G:/My Drive/LangBridge"` only when worker code
+     changed (publishes to Colab)
+- Commit messages end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
+
+---
+
+## What exists (v1, on main)
+
+Desktop app (FastAPI `app/` + React/Vite/Tailwind `web/`, SQLite `data/langbridge.db`), GPU
+work through **job folders** watched by workers (`worker/lb_worker/`):
+
+| Step | Where | Status |
+|---|---|---|
+| Import (yt-dlp / file, clip range) | local | done |
+| Separate (audio-separator BS-RoFormer, overlap 2) | Colab / Arc | done |
+| ASR (faster-whisper, Silero VAD, ≤30 s chunks) | Colab (large-v3) / PC (large-v3-turbo) | done |
+| Align (any HF CTC model per language, vendored whisperX DP) | Arc / Colab | done |
+| Diarize (pyannote community-1, waveform in memory) | CPU / Colab | done |
+| Characters, Transcript (merge/split, chapters, keys), Translate | app | done |
+| Voice (OmniVoice 16 steps 1.4×, 2 takes, scored) | Arc / Colab | done |
+| Mix (fit, rubberband, ducking, keep-original lines) + MP4 export | local | done |
+| Folders/workers settings, aligner search/check, keep-words list | app | done |
+
+Test clip project: `camille-interview` (105 s, 28 lines, 2 speakers, all reviewed, 24 dubbed
++ 4 kept original). Export: `data/projects/camille-interview/export/`.
+
+## What this branch added (A1/A2)
+
+- `translations(project_id, sentence_id, lang, text, locked, provenance, updated)`;
+  `provenance ∈ machine|human|reviewed`; machine never overwrites a person unless `force`.
+- Projects: primary `tgt_lang` + extra targets in `meta.targets`; `/api/languages`,
+  `POST /api/projects/{pid}/languages`.
+- `lang` on sentences/translate/voice/mix/export APIs (default primary). Takes have `lang`.
+  Rates per language in `meta.rates`. Mix in `mix/<lang>/`, export `<pid>.<lang>.mp4`.
+- Migration (in `app/db.py::_migrate`) moved `sentences.am` → translations **once**, blanked
+  the old column. Real DB migrated OK; backup at `data/backups/langbridge-20260926-104442.db`.
+- `app/langs.py` (names, ISO 639-3, script), `app/translate/length.py` (syllables per script).
+- Web: `web/src/shell/LangBar.tsx` on Translate/Voice/Mix.
+
+---
+
+## Environment (verified)
+
+| Thing | Value |
+|---|---|
+| OS / Python / Node | Windows 11, Python 3.13.2 (global), Node 24.18, ffmpeg 8.1.2 full (has rubberband) |
+| CPU / GPU / NPU | Core Ultra 7 165H 16C, **Intel Arc iGPU** (PyTorch XPU works, ~2 TFLOPS fp16, 7.8 GB shared), Intel AI Boost NPU (unused; OpenVINO only) |
+| RAM / link | 15.4 GB; internet ~0.8–1 MB/s (downloads must resume) |
+| Google Drive | Drive for Desktop at **`G:\My Drive`**; job folder `G:\My Drive\LangBridge` (Colab: `/content/drive/MyDrive/LangBridge`), model cache `…/LangBridge/cache` |
+| Local worker | folder **`D:\LangBridgeLocal`**: `.venv` (CPU torch), **`.venv-xpu`** (torch 2.14+xpu, used when present), `cache/`, `jobs/`; start with `Local-Worker.cmd` |
+| HF login | done on this PC (`hf auth login`); Colab secret `HF_TOKEN` set by owner |
+| Dev servers | `.claude/launch.json`: `api` (8765), `web` (Vite 5173 on 127.0.0.1, proxies /api) |
+| Owner's other projects | `D:\py_self\recomposer_v2` (journeys; source for Phase D), `D:\recomposer` (read-only donor), `D:\py_yaddessa\lab_resource_v2` (UI design reference) |
+
+## Measured numbers (camille clip, 105 s)
+
+- Arc: separation 3.6 min (overlap 2; CPU 36 min), align 53 s, voicing 12–19 s/line.
+- CPU: ASR turbo 50 s, diarization 60 s. Colab T4: separation ~3 min, ASR+diarize ~2 min.
+- Voice quality (chosen takes): likeness median 0.90 (real speaker 0.93–0.97), Amharic CER 11.5 %,
+  fit 1.06×; OmniVoice Amharic ~4 fidel/s at 1.0×, 5.15 syl/s at 1.4×.
+- Bake-off (Colab): OmniVoice bank 0.89 sim / 10.5 % CER; Amharic finetune 0.88 / 9.4 %;
+  own-sentence + fixed duration 0.85 / 22 %; edge-tts floor 0.66 / 12.4 %.
+
+## Open items / known gaps
+
+- Remove-a-target-language UI/API does not exist yet (adding does).
+- Human voices, series, cross-source characters, community server, journeys: not started (PLAN.md).
+- Colab passive notebook + Seed-VC fixes published but Seed-VC conversion never completed a
+  full run on Colab (session limits); local Arc path is the proven one.
+- Translation engine is Google's unofficial endpoint (clients5) — no LLM engine yet.

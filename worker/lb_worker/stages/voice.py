@@ -1,9 +1,9 @@
 """Voice every line in its speaker's cloned voice, several takes each, scored.
 
 Inputs: vocals.flac (the separated voice stem) and voice_plan.json:
-  {"engine": {"model", "steps", "speed", "takes"},
+  {"engine": {"model", "steps", "speed", "takes", "lang", "language", "asr"},
    "characters": {label: {"bank": [[s, e], ...], "bank_text": str, "heldout": [[s, e], ...]}},
-   "lines": [{"id", "speaker", "am", "start", "end", "slot_s"}]}
+   "lines": [{"id", "speaker", "text", "start", "end", "slot_s"}]}   ("am" in older plans)
 
 Takes are written straight into the job folder's out/takes/, each renamed into place
 only when complete, so a job that dies resumes where it stopped. Scores go to
@@ -21,7 +21,8 @@ from ..deps import ensure
 from ..registry import stage
 from .bakeoff import TTS, pip, sh
 
-DEFAULT_ENGINE = {"model": "k2-fsa/OmniVoice", "steps": 16, "speed": 1.4, "takes": 2}
+DEFAULT_ENGINE = {"model": "k2-fsa/OmniVoice", "steps": 16, "speed": 1.4, "takes": 2,
+                  "language": "Amharic", "asr": "badrex/Ethio-ASR-amharic"}
 
 
 @stage("voice", model_key="omnivoice")
@@ -54,13 +55,15 @@ def voice(ctx) -> dict:
 
     takes_dir = ctx.drive_dir / "out" / "takes"  # final location: survives a crash
     takes_dir.mkdir(parents=True, exist_ok=True)
+    for ln in plan["lines"]:  # plans written before languages were data say "am"
+        ln.setdefault("text", ln.get("am", ""))
     items = []
     for ln in plan["lines"]:
         c = plan["characters"].get(ln["speaker"])
-        if not c or not ln.get("am"):
+        if not c or not ln.get("text"):
             continue
         for k in range(int(engine["takes"])):
-            items.append({"key": f"{ln['id']}_t{k}", "text": ln["am"], "ref_audio": str(bank[ln["speaker"]]),
+            items.append({"key": f"{ln['id']}_t{k}", "text": ln["text"], "ref_audio": str(bank[ln["speaker"]]),
                           "ref_text": c["bank_text"], "speed": engine["speed"], "seed": 1000 + k,
                           "out": str(takes_dir / f"{ln['id']}_t{k}.wav"), "skip_existing": True})
     todo = sum(1 for it in items if not Path(it["out"]).exists())
@@ -73,7 +76,8 @@ def voice(ctx) -> dict:
         man.write_text(json.dumps(items, ensure_ascii=False), encoding="utf-8")
         res = ctx.work / "gen_res.json"
         p = sh([sys.executable, TTS / "omnivoice_gen.py", "--model", engine["model"], "--manifest", man,
-                "--out", res, "--steps", str(engine["steps"])], ctx, timeout=6 * 3600)
+                "--out", res, "--steps", str(engine["steps"]), "--language", engine["language"]],
+               ctx, timeout=6 * 3600)
         if p.returncode:
             raise RuntimeError(f"generation failed (exit {p.returncode}); see log")
     made = [it for it in items if Path(it["out"]).exists()]
@@ -86,7 +90,8 @@ def voice(ctx) -> dict:
          "text": it["text"], "slot_s": by_id[int(it["key"].split("_t")[0])]["slot_s"]} for it in made]},
         ensure_ascii=False), encoding="utf-8")
     scores_path = ctx.out / "scores.json"
-    p = sh([sys.executable, TTS / "score.py", "--manifest", man, "--out", scores_path, "--no-emotion"], ctx)
+    p = sh([sys.executable, TTS / "score.py", "--manifest", man, "--out", scores_path, "--no-emotion",
+            "--asr", engine.get("asr") or "none"], ctx)
     scores = json.loads(scores_path.read_text(encoding="utf-8"))["items"] if scores_path.exists() else {}
 
     summary = {}
@@ -96,7 +101,7 @@ def voice(ctx) -> dict:
             if it["key"].startswith(f"{ln['id']}_t"):
                 sc = scores.get(it["key"], {})
                 takes.append({"take": int(it["key"].split("_t")[1]), "file": f"takes/{Path(it['out']).name}",
-                              "text": ln["am"], **{k: sc.get(k) for k in ("sim", "cer", "dur", "dur_s", "asr")}})
+                              "text": ln["text"], **{k: sc.get(k) for k in ("sim", "cer", "dur", "dur_s", "asr")}})
         if takes:
             best = max(takes, key=take_score)
             summary[str(ln["id"])] = {"takes": takes, "best": best["take"]}

@@ -28,7 +28,7 @@ export default function App() {
   else if (route.screen === "transcript") body = <Transcript key={project.id} project={project} onChanged={refresh} />;
   else if (route.screen === "translate") body = <Translate key={project.id} project={project} state={state.data} onChanged={refresh} />;
   else if (route.screen === "voice") body = <Voice key={project.id} project={project} state={state.data} onChanged={refresh} />;
-  else if (route.screen === "mix") body = <Mix key={project.id} project={project} />;
+  else if (route.screen === "mix") body = <Mix key={project.id} project={project} onChanged={refresh} />;
   else body = <Overview key={project.id} project={project} state={state.data} onChanged={refresh} />;
 
   return (

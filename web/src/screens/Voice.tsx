@@ -1,13 +1,15 @@
 import { AudioLines, RefreshCw, Wand2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { api, usePoll, type AppState, type Character, type Project, type Take, type VoiceLine } from "../api";
+import LangBar, { langName, useLang } from "../shell/LangBar";
 import { Button, Empty, ModeToggle, Panel, PlayButton, Progress, Segmented, SpeakerDot, Tag, stateTone } from "../ui";
 
 /** Same ranking the worker uses to pick the best take. */
 const takeScore = (t: Take) => (t.sim ?? 0) - 0.6 * (t.cer ?? 1) - 0.25 * Math.max(0, (t.dur ?? 1) - 1.15);
 
 export default function Voice({ project, state, onChanged }: { project: Project; state: AppState | null; onChanged: () => void }) {
-  const v = usePoll(() => api.voice(project.id), [project.id], 8000);
+  const [lang, setLang] = useLang(project);
+  const v = usePoll(() => api.voice(project.id, lang), [project.id, lang], 8000);
   const chars = usePoll(() => api.characters(project.id), [project.id]);
   const [order, setOrder] = useState<"time" | "worst">("time");
   const [target, setTarget] = useState("");
@@ -17,13 +19,17 @@ export default function Voice({ project, state, onChanged }: { project: Project;
   const roots = state?.roots ?? [];
   const where = target || state?.active || "";
 
-  if (!data) return null;
-  const lines = data.lines.filter((l) => l.am && (!l.speaker || byLabel[l.speaker]?.important !== 0));
+  if (!data) return <div className="p-16 text-11.5 text-faint">Loading…</div>;
+  const lines = data.lines.filter((l) => l.tr && (!l.speaker || byLabel[l.speaker]?.important !== 0));
+  const bar = <LangBar project={project} lang={lang} onChange={setLang} onAdded={onChanged} />;
   if (!lines.length) {
     return (
-      <Empty icon={<AudioLines size={28} />} title="Nothing to voice yet">
-        Translate the lines first (Translate), and make sure the speakers are marked as needing a dub (Characters).
-      </Empty>
+      <div className="p-16 max-w-[1280px] mx-auto w-full flex flex-col gap-12">
+        {bar}
+        <Empty icon={<AudioLines size={28} />} title={`Nothing to voice in ${langName(lang)} yet`}>
+          Translate the lines first (Translate), and make sure the speakers are marked as needing a dub (Characters).
+        </Empty>
+      </div>
     );
   }
   const chosen = (l: VoiceLine) => l.takes.find((t) => t.chosen && !t.stale) ?? null;
@@ -41,7 +47,7 @@ export default function Voice({ project, state, onChanged }: { project: Project;
   async function queue(ids?: number[]) {
     setMsg(null);
     try {
-      const r = await api.queueVoice(project.id, { root: where, ids });
+      const r = await api.queueVoice(project.id, { root: where, ids, lang });
       setMsg(`Queued ${r.lines} line${r.lines === 1 ? "" : "s"} in ${roots.find((x) => x.id === r.root)?.name ?? r.root}.`);
       void v.reload();
     } catch (e) {
@@ -58,19 +64,20 @@ export default function Voice({ project, state, onChanged }: { project: Project;
   const e = data.engine;
   return (
     <div className="p-16 max-w-[1280px] mx-auto w-full flex flex-col gap-12">
+      {bar}
       <div className="flex items-center gap-10 flex-wrap">
         <div className="flex-1 min-w-[300px]">
-          <div className="text-15 font-semibold">Voice</div>
+          <div className="text-15 font-semibold">Voice · {langName(lang)}</div>
           <div className="text-11.5 text-dim">
             Each line is spoken in its speaker's cloned voice, {e.takes} takes per line. Every take is scored for likeness to the
-            speaker, how clearly the Amharic comes through, and fit to the original timing; the best is picked for you. Listen, swap
+            speaker, how clearly the {langName(lang)} comes through, and fit to the original timing; the best is picked for you. Listen, swap
             takes, regenerate.
           </div>
         </div>
         <Tag tone="accent">OmniVoice · {e.steps} steps · {e.speed}×</Tag>
         <Tag tone={voiced === dubLines.length ? "good" : "neutral"}>{voiced}/{dubLines.length} voiced</Tag>
         {keptCount > 0 && <Tag tone="cross" title="Lines kept in the original voice (interjections)">{keptCount} kept original</Tag>}
-        {data.am_rate && <Tag title="Measured from the chosen takes; the Translate meter uses it">{data.am_rate} fidel/s</Tag>}
+        {data.rate && <Tag title="Speaking rate measured from the chosen takes; the Translate meter uses it">{data.rate} syl/s</Tag>}
       </div>
 
       <Panel>
@@ -123,7 +130,7 @@ function Line({ l, c, project, onChoose, onRegenerate, busy, onMode }: {
       </div>
       <div className="min-w-0">
         <div className="text-11.5 text-dim">{l.text}</div>
-        <div className={`font-eth text-14 leading-relaxed ${l.mode === "keep" ? "opacity-45 line-through" : ""}`}>{l.am}</div>
+        <div className={`font-eth text-14 leading-relaxed ${l.mode === "keep" ? "opacity-45 line-through" : ""}`}>{l.tr}</div>
         <div className="mt-4"><ModeToggle mode={l.mode} set={l.mode_set} suggested={l.mode_suggested} onChange={onMode} /></div>
         {l.mode === "keep" ? (
           <div className="text-10.5 text-dim mt-5">The speaker's original voice plays here, and the subtitles show the original words.</div>
@@ -154,7 +161,7 @@ function TakeChip({ t, project, slot, onChoose }: { t: Take; project: Project; s
       <span className={`text-10 font-mono ${tone((t.sim ?? 0) >= 0.85, (t.sim ?? 0) >= 0.75)}`} title="voice likeness (0–1)">
         sim {t.sim?.toFixed(2) ?? "–"}
       </span>
-      <span className={`text-10 font-mono ${tone((t.cer ?? 1) <= 0.12, (t.cer ?? 1) <= 0.25)}`} title="Amharic character error rate when transcribed back">
+      <span className={`text-10 font-mono ${tone((t.cer ?? 1) <= 0.12, (t.cer ?? 1) <= 0.25)}`} title="character error rate when the take is transcribed back (– when the language has no aligner)">
         CER {t.cer != null ? `${Math.round(t.cer * 100)}%` : "–"}
       </span>
       <span className={`text-10 font-mono ${tone(fit <= 1.1, fit <= 1.3)}`} title={`${t.dur_s?.toFixed(1) ?? "?"}s for a ${slot.toFixed(1)}s slot`}>

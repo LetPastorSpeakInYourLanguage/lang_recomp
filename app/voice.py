@@ -1,7 +1,7 @@
 """Voicing: queue the voice stage, pull its takes back in, pick takes.
 
-A take belongs to a line and remembers the Amharic text it was made from, so an
-edited translation shows its old takes as stale instead of silently mismatched.
+A take belongs to a line and a language, and remembers the text it was made from,
+so an edited translation shows its old takes as stale instead of silently mismatched.
 """
 from __future__ import annotations
 
@@ -10,21 +10,14 @@ import shutil
 import statistics
 import time
 
-from . import db, project, settings
-from .translate.ethiopic import am_syllables
+from . import db, langs, project, settings
+from .translate.length import syllables
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS takes (
-  project_id TEXT, sentence_id INTEGER, job_id TEXT, take INTEGER, path TEXT, text TEXT,
-  sim REAL, cer REAL, dur REAL, dur_s REAL, asr TEXT, chosen INTEGER DEFAULT 0, created REAL,
-  PRIMARY KEY (project_id, sentence_id, job_id, take)
-);
-"""
 ENGINE = {"model": "k2-fsa/OmniVoice", "steps": 16, "speed": 1.4, "takes": 2}
 
 
 def _init() -> None:
-    db.conn().executescript(SCHEMA)
+    db.conn()  # the takes table lives in db.SCHEMA
 
 
 def _clean(text: str) -> bool:
@@ -59,25 +52,32 @@ def characters_plan(pid: str) -> dict:
     return out
 
 
-def queue(pid: str, root_id: str | None = None, ids: list[int] | None = None, takes: int | None = None) -> dict:
+def queue(pid: str, root_id: str | None = None, ids: list[int] | None = None, takes: int | None = None,
+          lang: str | None = None) -> dict:
     _init()
+    lang = project.lang_or_primary(pid, lang)
     r = settings.root(root_id)
     q = project.queue(r["id"])
     vocals = project.pdir(pid) / "vocals.flac"
     if not vocals.exists():
         raise RuntimeError("no vocal stem yet: load the analysis results first")
     chars = characters_plan(pid)
-    lines = [s for s in project.sentences(pid) if s["am"] and s["mode"] == "dub" and s["speaker"] in chars
+    lines = [s for s in project.sentences(pid, lang) if s["tr"] and s["mode"] == "dub" and s["speaker"] in chars
              and (not ids or s["id"] in ids)]
     if not lines:
-        raise RuntimeError("nothing to voice: translate the lines of important characters first")
-    plan = {"engine": ENGINE | ({"takes": takes} if takes else {}), "characters": chars,
-            "lines": [{k: s[k] for k in ("id", "speaker", "am", "start", "end", "slot_s")} for s in lines]}
+        raise RuntimeError(f"nothing to voice in {langs.name(lang)}: translate the lines of important characters first")
+    # The voice model wants the language's name; the scorer back-transcribes with the
+    # language's aligner (a CTC model is a speech recogniser) when one is set.
+    engine = ENGINE | ({"takes": takes} if takes else {}) | {
+        "lang": lang, "language": langs.name(lang), "asr": settings.aligner(lang) or ""}
+    plan = {"engine": engine, "characters": chars,
+            "lines": [{"id": s["id"], "speaker": s["speaker"], "text": s["tr"], "start": s["start"],
+                       "end": s["end"], "slot_s": s["slot_s"]} for s in lines]}
     path = project.pdir(pid) / "voice_plan.json"
     path.write_text(json.dumps(plan, ensure_ascii=False, indent=1), encoding="utf-8")
-    job = q.submit("voice", {"project": pid}, files=[path], shared=[q.put_media(pid, vocals)])
+    job = q.submit("voice", {"project": pid, "lang": lang}, files=[path], shared=[q.put_media(pid, vocals)])
     project.record_job(pid, job, "voice", role="voice", root=r["id"])
-    return {"job": job, "lines": len(lines), "root": r["id"]}
+    return {"job": job, "lines": len(lines), "root": r["id"], "lang": lang}
 
 
 def ingest(pid: str) -> int:
@@ -93,42 +93,49 @@ def ingest(pid: str) -> int:
             continue
         out = q.out_dir(j["id"])
         summary = json.loads((out / "voice.json").read_text(encoding="utf-8"))
+        # Jobs from before languages were data are in the project's primary language.
+        lang = (summary.get("engine") or {}).get("lang") or project.get(pid)["tgt_lang"]
         dst = project.pdir(pid) / "takes"
         dst.mkdir(exist_ok=True)
         for sid, line in summary["lines"].items():
-            db.run("UPDATE takes SET chosen=0 WHERE project_id=? AND sentence_id=?", pid, int(sid))
+            db.run("UPDATE takes SET chosen=0 WHERE project_id=? AND sentence_id=? AND lang=?", pid, int(sid), lang)
             for t in line["takes"]:
                 local = dst / f"{j['id']}_{sid}_t{t['take']}.wav"
                 shutil.copy2(out / t["file"], local)
                 db.run("INSERT OR REPLACE INTO takes (project_id,sentence_id,job_id,take,path,text,sim,cer,dur,dur_s,"
-                       "asr,chosen,created) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", pid, int(sid), j["id"], t["take"],
+                       "asr,chosen,created,lang) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", pid, int(sid), j["id"], t["take"],
                        str(local), t["text"], t.get("sim"), t.get("cer"), t.get("dur"), t.get("dur_s"),
-                       t.get("asr"), int(t["take"] == line["best"]), time.time())
+                       t.get("asr"), int(t["take"] == line["best"]), time.time(), lang)
                 n += 1
         loaded.add(j["id"])
         db.set_meta(pid, voice_loaded=sorted(loaded))
-    if n:
-        calibrate_rate(pid)
+        calibrate_rate(pid, lang)
     return n
 
 
-def calibrate_rate(pid: str) -> None:
-    """Measure the voice's real Amharic rate (fidels per second) from the chosen
-    takes, so the Translate meter predicts lengths for this engine and speed."""
-    rates = [am_syllables(t["text"]) / t["dur_s"] for t in lines_takes(pid, chosen_only=True)
-             if t["dur_s"] and am_syllables(t["text"]) > 4]
+def calibrate_rate(pid: str, lang: str) -> None:
+    """Measure the voice's real speaking rate in this language (syllables per second)
+    from the chosen takes, so the Translate meter predicts lengths for this engine,
+    speed and language."""
+    rates = [syllables(t["text"], lang) / t["dur_s"] for t in lines_takes(pid, chosen_only=True, lang=lang)
+             if t["dur_s"] and syllables(t["text"], lang) > 4]
     if len(rates) >= 3:
-        db.set_meta(pid, am_rate=round(statistics.median(rates), 2))
+        db.set_meta(pid, rates=(db.meta(pid).get("rates") or {}) | {lang: round(statistics.median(rates), 2)})
 
 
-def lines_takes(pid: str, chosen_only: bool = False) -> list[dict]:
+def lines_takes(pid: str, chosen_only: bool = False, lang: str | None = None) -> list[dict]:
     _init()
     sql = "SELECT rowid AS take_id, * FROM takes WHERE project_id=?" + (" AND chosen=1" if chosen_only else "")
-    return db.rows(sql + " ORDER BY sentence_id, created, take", pid)
+    args: list = [pid]
+    if lang:
+        sql += " AND lang=?"
+        args.append(lang)
+    return db.rows(sql + " ORDER BY sentence_id, created, take", *args)
 
 
 def choose(pid: str, take_id: int) -> None:
-    t = db.row("SELECT sentence_id FROM takes WHERE rowid=? AND project_id=?", take_id, pid)
+    t = db.row("SELECT sentence_id, lang FROM takes WHERE rowid=? AND project_id=?", take_id, pid)
     if not t:
         raise ValueError("no such take")
-    db.run("UPDATE takes SET chosen=(rowid=?) WHERE project_id=? AND sentence_id=?", take_id, pid, t["sentence_id"])
+    db.run("UPDATE takes SET chosen=(rowid=?) WHERE project_id=? AND sentence_id=? AND lang=?",
+           take_id, pid, t["sentence_id"], t["lang"])
