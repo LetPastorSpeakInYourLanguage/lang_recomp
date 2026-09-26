@@ -82,10 +82,19 @@ def create(name: str, source: str, clip_start: float | None, clip_end: float | N
 
 
 def _import(pid: str, update) -> None:
+    _fetch(pid, update)
+    update(0.85, f"sending audio to {settings.root()['name']}")
+    analyze(pid)
+
+
+def _fetch(pid: str, update, keep_audio: bool = False) -> None:
+    """Download (or copy) the video, clip range applied, and extract its audio.
+    ``keep_audio`` leaves an audio track that is already here (e.g. one that arrived
+    in a work package) as it is."""
     p = get(pid)
     d = pdir(pid)
     video = d / "clip.mp4"
-    src = p["source"].strip()
+    src = (p["source"] or "").strip()
     if re.match(r"https?://", src):
         update(0.05, "downloading with yt-dlp")
         cmd = ["yt-dlp", "--js-runtimes", "node", "-f", "bv*[height<=720]+ba/b[height<=720]",
@@ -114,20 +123,51 @@ def _import(pid: str, update) -> None:
                   "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", str(video)])
         else:
             shutil.copy2(path, video)
-    update(0.7, "extracting audio")
     audio = d / "clip.flac"
-    _run(["ffmpeg", "-v", "error", "-y", "-i", str(video), "-vn", "-ac", "1", "-ar", "44100",
-          "-c:a", "flac", str(audio)])
+    if not (keep_audio and audio.exists()):
+        update(0.7, "extracting audio")
+        _run(["ffmpeg", "-v", "error", "-y", "-i", str(video), "-vn", "-ac", "1", "-ar", "44100",
+              "-c:a", "flac", str(audio)])
     dur = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
                                 "-of", "csv=p=0", str(video)], capture_output=True, text=True).stdout or 0)
-    db.run("UPDATE projects SET video=?, audio=?, duration=? WHERE id=?", str(video), str(audio), dur, pid)
+    db.run("UPDATE projects SET video=?, audio=?, duration=COALESCE(duration, ?) WHERE id=?", str(video), str(audio), dur, pid)
     from . import recurring  # (imports project) — fingerprint now, so finding recurring parts is quick later
     try:
         recurring.source_print(pid)
     except Exception as e:  # never fail an import over it; it is computed on demand again
         update(None, f"fingerprint skipped: {e}")
-    update(0.85, f"sending audio to {settings.root()['name']}")
-    analyze(pid)
+
+
+def refetch(pid: str) -> str:
+    """A source that arrived in a work package without its media: fetch the video again
+    from its origin (same clip range) and, if the voice stems did not travel, separate
+    them on a worker. Its lines are kept exactly as they came: no new transcription."""
+    return tasks.start(pid, "import", _refetch, pid, serial="import")
+
+
+def _refetch(pid: str, update) -> None:
+    d = pdir(pid)
+    if not (d / "clip.mp4").exists():
+        _fetch(pid, update, keep_audio=True)
+    if (d / "vocals.flac").exists() and (d / "background.flac").exists():
+        update(1.0, "media ready")
+        return
+    r = settings.root()
+    q = queue(r["id"])
+    job = q.submit("separate", {"project": pid}, shared=[q.put_media(pid, get(pid)["audio"])])
+    record_job(pid, job, "separate", role="stems", root=r["id"])
+    update(0.8, f"separating voices on {r['name']}")
+    for _ in range(6 * 60 * 6):  # poll the job folder for up to six hours
+        st = q.status(job).get("state")
+        if st == "done":
+            for name in ("vocals.flac", "background.flac"):
+                shutil.copy2(q.out_dir(job) / name, d / name)
+            update(1.0, "media ready")
+            return
+        if st == "failed":
+            raise RuntimeError(f"separation failed on {r['name']}: {q.status(job).get('error')}")
+        time.sleep(10)
+    raise RuntimeError("separation did not finish within six hours; try again")
 
 
 def retry_import(pid: str) -> str:

@@ -7,6 +7,7 @@ import Home from "./screens/Home";
 import Overview from "./screens/Overview";
 import Series from "./screens/Series";
 import Settings from "./screens/Settings";
+import Share from "./screens/Share";
 import Transcript from "./screens/Transcript";
 import Translate from "./screens/Translate";
 import Voice from "./screens/Voice";
@@ -27,6 +28,7 @@ export default function App() {
 
   let body;
   if (route.settings) body = <Settings state={state.data} onSaved={() => void state.reload()} />;
+  else if (route.share) body = <Share key={route.share} id={route.share} />;
   else if (route.cast) body = <Cast key={route.cast} id={route.cast} />;
   else if (route.clips) body = <Clips seriesId={route.clips.series} series={seriesList} projects={list} />;
   else if (route.series) body = <Series key={route.series} id={route.series} onChanged={refresh} />;

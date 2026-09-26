@@ -57,6 +57,17 @@ export interface PartCandidate {
   members: { source_id: string; source_name?: string; start: number; end: number; score: number }[];
   sources: number; of: number; kind: ClipKind; duration: number;
 }
+export interface PackageInfo {
+  format: string; version: number; exported_at: number; note: string; media: "none" | "opus" | "flac"; languages: string[];
+  work: { uid: string; name: string; kind: SeriesKind; src_lang: string; targets: string[] }; sources: number;
+  /** the local id of the same work, if it is already in this library */
+  here: string | null;
+}
+export interface ImportReport {
+  created: boolean; work: string; sources: { added: string[]; matched: string[] }; lines: number;
+  characters: { added: number; matched: number }; clips: { added: number; matched: number };
+  translations: Record<string, { written: number; kept_here: number; conflicts: number }>; fetching: string[]; notes: string[];
+}
 export interface Collection { id: number; name: string; items: number; deleted: number }
 export interface NewVideo { name: string; source: string; clip_start?: number | null; clip_end?: number | null; max_speakers?: number | null }
 
@@ -167,6 +178,12 @@ export const api = {
   renameCollection: (id: number, name: string) => req<Collection>("PATCH", `/api/collections/${id}`, { name }),
   archiveCollection: (id: number) => req<Collection>("DELETE", `/api/collections/${id}`),
   restoreCollection: (id: number) => req<Collection>("POST", `/api/collections/${id}/restore`),
+  exportWork: (s: string, b: { langs: string[]; media: "none" | "opus" | "flac"; takes: boolean; note: string }) =>
+    req<{ name: string; path: string; size: number }>("POST", `/api/series/${s}/export`, b),
+  exportUrl: (name: string) => `/api/exports/${encodeURIComponent(name)}`,
+  openExports: () => req("POST", "/api/exports/open"),
+  inspectPackage: (path: string) => req<PackageInfo>("POST", "/api/import/inspect", { path }),
+  importPackage: (path: string, fetch = true) => req<ImportReport>("POST", "/api/import", { path, fetch }),
   deleteSeries: (s: string) => req<{ released: number }>("DELETE", `/api/series/${s}`),
   orderSeries: (s: string, ids: string[]) => req<Project[]>("PUT", `/api/series/${s}/order`, { ids }),
   attachProject: (p: string, series_id: string | null) => req<Project>("PUT", `/api/projects/${p}/series`, { series_id }),
