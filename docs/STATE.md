@@ -13,18 +13,17 @@ Hard-won lessons: [LESSONS.md](LESSONS.md).
 | | |
 |---|---|
 | **Repo** | `D:\py_self\lang_bridge_test` → GitHub `LetPastorSpeakInYourLanguage/lang_recomp` (public, MIT) |
-| **`main`** | `d6d5e7c` — v1 app + README + LICENSE, pushed |
-| **Current branch** | `feat/languages-as-data` — 4 commits (+ this docs commit), **each verified alone**, not merged, not pushed |
-| **Plan phase** | A1 (languages as data) and A2 (length per script) **done**; next **A3** (chapters as entities) |
-| **Tests** | 39 pass (`python -m pytest -q tests`); web typecheck + build pass |
+| **`main`** | A1–A2 merged locally (`93f9d85`); `origin/main` is still `d6d5e7c` — **not pushed** |
+| **Current branch** | `feat/chapters` (A3) — each commit verified alone; merge into `main` after the build pass |
+| **Plan phase** | A1, A2, A3 **done**; next **A4** (series with multiple sources) |
+| **Tests** | 47 pass (`python -m pytest -q tests`); web typecheck + build pass |
 
 ### Next steps, in order
 
-1. On `feat/languages-as-data`: run the full main-build pass (below), then
-   `git checkout main && git merge --no-ff feat/languages-as-data`, run the pass again on
-   `main`. Push only when the owner says so.
-2. New branch `feat/chapters` → Phase A3, then `feat/series` (A4), `feat/cast-linking` (A5),
-   A6, A7, then Phase B (community server) — see PLAN.md.
+1. Merge `feat/chapters` into `main` (`--no-ff`) after the build pass; rerun it on `main`.
+   Push only when the owner says so.
+2. New branch `feat/series` → Phase A4, then `feat/cast-linking` (A5), A6, A7, then
+   Phase B (community server) — see PLAN.md.
 
 ### Working method the owner asked for
 
@@ -64,7 +63,19 @@ work through **job folders** watched by workers (`worker/lb_worker/`):
 Test clip project: `camille-interview` (105 s, 28 lines, 2 speakers, all reviewed, 24 dubbed
 + 4 kept original). Export: `data/projects/camille-interview/export/`.
 
-## What this branch added (A1/A2)
+## What A3 added (chapters)
+
+- `chapters(project_id, id, start, title, updated)` in `app/chapters.py`: `ensure`, `assign`
+  (sets `chapter` + `chapter_head` on lines), `listing` (index, end, line count), `toggle`
+  (the C key), `rename`, `normalize` (after merge/split/ingest), `group` (translation
+  context). Ids come from `meta.chapter_seq` and are never reused.
+- API: `GET /api/projects/{pid}/chapters`, `POST …/chapters/toggle {at}`,
+  `PATCH …/chapters/{cid} {title}`; translate takes a chapter **id**. `chapter_break` is gone
+  from the API; the column stays in SQLite, cleared by the one-shot migration.
+- Web: Transcript headers show "Chapter N" + editable title; Translate groups by chapter id.
+- Real DB migrated (camille: one chapter). Backup `data/backups/langbridge-20260926-111244.db`.
+
+## What A1/A2 added (languages)
 
 - `translations(project_id, sentence_id, lang, text, locked, provenance, updated)`;
   `provenance ∈ machine|human|reviewed`; machine never overwrites a person unless `force`.
@@ -104,6 +115,8 @@ Test clip project: `camille-interview` (105 s, 28 lines, 2 speakers, all reviewe
 ## Open items / known gaps
 
 - Remove-a-target-language UI/API does not exist yet (adding does).
+- New-project form still assumes English → Amharic (`web/src/screens/Home.tsx` tag;
+  projects default `src_lang='en'`, `tgt_lang='am'`): needs a source/target picker (A7).
 - Human voices, series, cross-source characters, community server, journeys: not started (PLAN.md).
 - Colab passive notebook + Seed-VC fixes published but Seed-VC conversion never completed a
   full run on Colab (session limits); local Arc path is the proven one.
