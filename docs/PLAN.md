@@ -46,11 +46,13 @@ and `set_translation`).
 1. ✅ **Languages as data** — `translations` table, many targets per project, lang on every API,
    per-language takes/rates/mix/export, one-shot migration of `sentences.am`.
 2. ✅ **Length per script** — `app/translate/length.py`, rates calibrated per language.
-3. 🔜 **Chapters as entities** — `chapters(id, source_id, index, title, start, end, status)`
-   replacing the `chapter_break` flag; lines belong to a chapter; chapters are the unit of
-   assignment, translation context, recording sessions and coarse journey moments. Migrate
-   from existing `chapter_break` flags; keep Transcript's `C` key working.
-4. ⬜ **Series with multiple sources** — `series → sources (episodes/films) → chapters → lines`;
+3. ✅ **Chapters as entities** — `chapters(project_id, id, start, title, updated)` replacing
+   the `chapter_break` flag (`app/chapters.py`); a line belongs to the chapter containing its
+   start; index/end are derived; ids never reused. Chapters are the unit of assignment,
+   translation context, recording sessions and coarse journey moments. Migrated from flags;
+   `C` key kept; titles editable in Transcript. `source_id` arrives with A4. No chapter
+   `status` column: per-language task status lives on chapter tasks (Phase B).
+4. 🔜 **Series with multiple sources** — `series → sources (episodes/films) → chapters → lines`;
    today's projects become sources in a series; per-source analysis unchanged.
 5. ⬜ **Cross-source characters** — characters at series level; `appearances(source_id,
    diarization_label, character_id, confidence, confirmed_by)`; match by diarization centroids

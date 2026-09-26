@@ -12,6 +12,7 @@ export default function Translate({ project, state, onChanged }: { project: Proj
   const [lang, setLang] = useLang(project);
   const sents = usePoll(() => api.sentences(project.id, lang), [project.id, lang]);
   const chars = usePoll(() => api.characters(project.id), [project.id]);
+  const chaps = usePoll(() => api.chapters(project.id), [project.id]);
   const rows = sents.data ?? [];
   const byLabel = useMemo(() => Object.fromEntries((chars.data ?? []).map((c) => [c.label, c])), [chars.data]);
   const running = !!state?.tasks.some((t) => t.project_id === project.id && t.kind === "translate");
@@ -40,8 +41,8 @@ export default function Translate({ project, state, onChanged }: { project: Proj
     return <Empty icon={<Languages size={28} />} title="Nothing to translate yet">Load the analysis results and check the transcript first.</Empty>;
   }
 
-  const chapters: Sentence[][] = [];
-  rows.forEach((s, i) => { if (i === 0 || s.chapter_break) chapters.push([]); chapters[chapters.length - 1].push(s); });
+  // Lines grouped under their chapter, in time order (chapters without lines are skipped).
+  const chapters = (chaps.data ?? []).map((c) => ({ c, lines: rows.filter((s) => s.chapter === c.id) })).filter((g) => g.lines.length);
   const done = rows.filter((r) => r.tr).length;
   const over = rows.filter((r) => (r.budget?.ratio ?? 0) > 1.25).length;
 
@@ -64,11 +65,11 @@ export default function Translate({ project, state, onChanged }: { project: Proj
         </Button>
       </div>
 
-      {chapters.map((ch, ci) => (
-        <Panel key={ci} title={`Chapter ${ci + 1} · ${ch.length} lines`}
-          actions={<Button variant="ghost" disabled={running} onClick={() => void translate(ci)}><RefreshCw size={11} />Re-translate chapter</Button>}>
+      {chapters.map(({ c, lines }) => (
+        <Panel key={c.id} title={`Chapter ${c.index + 1}${c.title ? ` · ${c.title}` : ""} · ${lines.length} lines`}
+          actions={<Button variant="ghost" disabled={running} onClick={() => void translate(c.id)}><RefreshCw size={11} />Re-translate chapter</Button>}>
           <div className="divide-y divide-border">
-            {ch.map((s) => <Line key={s.id} s={s} c={s.speaker ? byLabel[s.speaker] : undefined} project={project} lang={lang} onPatch={(b) => void patch(s, b)} />)}
+            {lines.map((s) => <Line key={s.id} s={s} c={s.speaker ? byLabel[s.speaker] : undefined} project={project} lang={lang} onPatch={(b) => void patch(s, b)} />)}
           </div>
         </Panel>
       ))}

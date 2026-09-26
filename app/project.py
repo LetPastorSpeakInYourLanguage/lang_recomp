@@ -11,7 +11,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from . import db, settings, tasks
+from . import chapters as chaps, db, settings, tasks
 from .jobs.drive_queue import DriveQueue
 from .translate.google_batch import GoogleBatchTranslator
 from .translate.length import budget
@@ -201,11 +201,12 @@ def ingest(pid: str) -> dict:
     locked, sents = keep_reviewed(old, regroup(asr))
     kept = carry_over([o for o in old if not o["reviewed"]], sents) | {o["id"]: o["id"] for o in locked}
     db.run("DELETE FROM sentences WHERE project_id=? AND reviewed=0", pid)
-    db.many("INSERT INTO sentences (project_id,id,speaker,start,end,text,words,chapter_break,reviewed)"
-            " VALUES (?,?,?,?,?,?,?,?,?)",
+    db.many("INSERT INTO sentences (project_id,id,speaker,start,end,text,words,reviewed)"
+            " VALUES (?,?,?,?,?,?,?,?)",
             [(pid, s["id"], s["speaker"], s["start"], s["end"], s["text"], json.dumps(s["words"]),
-              s.get("chapter_break", 0), s.get("reviewed", 0)) for s in sents])
+              s.get("reviewed", 0)) for s in sents])
     _remap_lines(pid, kept)
+    chaps.normalize(pid)  # chapters are times: they keep holding whatever lines now start in them
     sents = locked + sents
     talk: dict[str, float] = {}
     for t in dia["exclusive"]:
@@ -243,8 +244,8 @@ def keep_reviewed(old: list[dict], new: list[dict], max_overlap: float = 0.3) ->
 def carry_over(old: list[dict], new: list[dict], min_iou: float = 0.6) -> dict[int, int]:
     """Re-running analysis (e.g. re-aligning) must not throw away the work done on
     the lines. Each new line takes over from the old line it overlaps most in time,
-    if they share at least ``min_iou`` of their combined span: reviewed mark, chapter
-    break, and, for lines marked reviewed, the edited text and speaker too. Returns
+    if they share at least ``min_iou`` of their combined span: the reviewed mark
+    and, for lines marked reviewed, the edited text and speaker too. Returns
     {old id: new id}; translations and takes follow via `_remap_lines`."""
     kept: dict[int, int] = {}
     used: set[int] = set()
@@ -263,7 +264,7 @@ def carry_over(old: list[dict], new: list[dict], min_iou: float = 0.6) -> dict[i
             continue
         used.add(best["id"])
         kept[best["id"]] = s["id"]
-        s.update(chapter_break=best["chapter_break"], reviewed=best["reviewed"])
+        s["reviewed"] = best["reviewed"]
         if best["reviewed"]:  # the person confirmed this line: their wording and speaker win
             s.update(text=best["text"], speaker=best["speaker"])
     return kept
@@ -330,7 +331,7 @@ def set_translation(pid: str, sid: int, lang: str, text: str | None = None, lock
 
 def summary(pid: str) -> dict:
     p = get(pid)
-    n = db.row("SELECT COUNT(*) n, SUM(reviewed) rv, SUM(chapter_break) ch FROM sentences WHERE project_id=?", pid)
+    n = db.row("SELECT COUNT(*) n, SUM(reviewed) rv FROM sentences WHERE project_id=?", pid)
     per_lang = {r["lang"]: r["n"] for r in db.rows(
         "SELECT t.lang, COUNT(*) n FROM translations t JOIN sentences s ON s.project_id=t.project_id AND s.id=t.sentence_id"
         " WHERE t.project_id=? AND t.text<>'' GROUP BY t.lang", pid)}
@@ -342,7 +343,7 @@ def summary(pid: str) -> dict:
     p["counts"] = {"sentences": n["n"] or 0, "translated": per_lang.get(p["tgt_lang"], 0),
                    "translated_by_lang": {t: per_lang.get(t, 0) for t in p["targets"]},
                    "reviewed": n["rv"] or 0, "kept": kept_lines,
-                   "chapters": (n["ch"] or 0) + (1 if n["n"] else 0), "characters": len(chars),
+                   "chapters": len(chaps.ensure(pid)) if n["n"] else 0, "characters": len(chars),
                    "genders_set": sum(1 for c in chars if c["gender"])}
     p["analysis"] = analysis
     p["import"] = next((t for t in tasks.list_for(pid) if t["kind"] == "import"), None)
@@ -365,6 +366,7 @@ def sentences(pid: str, lang: str | None = None) -> list[dict]:
                   " WHERE s.project_id=? ORDER BY s.start", lang, pid)
     r = rate(pid, lang)
     kw = keep_words()
+    chaps.assign(out, chaps.ensure(pid))
     for s in out:
         s.pop("words", None)  # only merge/split need them; keep the list payload small
         for old in ("am", "am_locked"):
@@ -380,24 +382,18 @@ def sentences(pid: str, lang: str | None = None) -> list[dict]:
     return out
 
 
-def chapters(sents: list[dict]) -> list[list[dict]]:
-    out: list[list[dict]] = [[]]
-    for s in sents:
-        if s["chapter_break"] and out[-1]:
-            out.append([])
-        out[-1].append(s)
-    return [c for c in out if c]
-
-
 # ---- translation -------------------------------------------------------------------------
 def translate(pid: str, lang: str | None = None, chapter: int | None = None, force: bool = False) -> str:
+    """Translate every chapter, or only the one with id ``chapter``."""
+    if chapter is not None and chapter not in {c["id"] for c in chaps.ensure(pid)}:
+        raise ValueError("no such chapter")
     return tasks.start(pid, "translate", _translate, pid, lang_or_primary(pid, lang), chapter, force)
 
 
 def _translate(pid: str, lang: str, chapter: int | None, force: bool, update) -> None:
     p = get(pid)
-    chs = chapters(sentences(pid, lang))
-    todo = [chs[chapter]] if chapter is not None else chs
+    todo = [lines for c, lines in chaps.group(sentences(pid, lang), chaps.ensure(pid))
+            if chapter is None or c["id"] == chapter]
     tr = GoogleBatchTranslator(p["src_lang"], lang, context=2)
     for i, ch in enumerate(todo):
         update(i / len(todo), f"chapter {i + 1}/{len(todo)}")
@@ -437,6 +433,7 @@ def merge_next(pid: str, sid: int) -> dict:
            f"{a['text'].rstrip()} {b['text'].lstrip()}".strip(),
            json.dumps(_words(pid, a) + _words(pid, b)), pid, a["id"])
     db.run("DELETE FROM sentences WHERE project_id=? AND id=?", pid, b["id"])
+    chaps.normalize(pid)  # merging across a chapter start moves it to the next line
     return {"kept": a["id"], "removed": b["id"]}
 
 
@@ -464,4 +461,5 @@ def split(pid: str, sid: int, word_index: int) -> dict:
            " WHERE project_id=? AND id=?", cut_end, " ".join(tokens[:word_index]), json.dumps(w1), pid, sid)
     db.run("INSERT INTO sentences (project_id,id,speaker,start,end,text,words) VALUES (?,?,?,?,?,?,?)",
            pid, new_id, s["speaker"], cut_start, s["end"], " ".join(tokens[word_index:]), json.dumps(w2))
+    chaps.normalize(pid)
     return {"first": sid, "second": new_id}

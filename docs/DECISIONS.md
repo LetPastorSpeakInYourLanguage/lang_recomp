@@ -20,3 +20,5 @@
 | 16 | Workflow: feature branches, step-by-step commits each verified alone, merge per phase, full build pass | Owner request |
 | 17 | Repo public, MIT; `data/`, test media and private notes never committed | Owner request |
 | 18 | Never spawn subagents (owner's global rule) | `~/.claude/CLAUDE.md` |
+| 19 | Chapters are **time spans** with stable, never-reused ids; a line belongs to the chapter containing its start; index/end derived, not stored | Merge/split/reload never rewrite membership; community tasks can point at chapter ids |
+| 20 | Merging across a chapter start moves the chapter to the next line; a chapter left with no lines is dropped | The old flag silently joined two whole chapters |
