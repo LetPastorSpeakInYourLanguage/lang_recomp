@@ -41,6 +41,21 @@
 - The shift-vote peak can be a frame off the true alignment: always try ±2 frames.
 - Silence repeats one value thousands of times: drop over-common values from the vote.
 
+**Real series (6 Minute English)**
+- YouTube uploads of a "same format" show need not share identical audio: its episodes'
+  stings differ (best fingerprint match ~12 of 32 bits vs ~15 random, identical < 5). The
+  discovery correctly proposed nothing. Verify a candidate series by fingerprint before
+  promising an intro.
+- The diarizer finds interview clips inside an episode as extra voices (2 extra here):
+  leave them unnamed/auto; only presenters recur.
+
+**Worker**
+- A model object cached across jobs keeps whatever per-job state it was created with:
+  audio-separator's `output_dir` pointed at the first job's folder, so the 2nd+ job of a
+  session failed. Reset per-job paths on reused models.
+- Imports run in the API process: restarting the API kills an in-flight download; check
+  `/api/state` tasks before restarting.
+
 **Browser-pane testing**
 - After changing `router.ts` or other module-level code, reload the page: Vite's hot update
   can leave the old router running (Clips route rendered Home).

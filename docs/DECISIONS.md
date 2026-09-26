@@ -28,3 +28,9 @@
 | 24 | A **recurring part** (intro, opener, outro, jingle, recurring) is a clip kind; it is **dubbed once at its origin** and reused where an occurrence is **confirmed** | Owner: "saved once"; fingerprint hits are proposals, people confirm (ADR-13 spirit) |
 | 25 | Occurrences found by **Chromaprint** (ffmpeg built-in) — sliding match for a known part, exact-value shift votes + frame check for discovery (Jellyfin Intro Skipper method) | No new dependency; fast (~8 s per hour of audio); proven method |
 | 26 | Lines only **fully inside** a confirmed occurrence are linked; partial ones are dubbed normally | Never drop words at a boundary |
+| 27 | **Characters belong to the work**, not a video; a video's diarizer labels are *appearances* of them; voice matches across videos are **proposals** a person confirms | Owner: characters independent of media; manual truth |
+| 28 | **Three layers**: work (language-neutral), language (per target), local (never shared); every portable row has a permanent **uid** | Owner: a published work must transfer to another team for another language |
+| 29 | A standalone video has its own hidden single-source work (`kind='single'`) | One model for cast, clips and sharing; the UI still says "standalone" |
+| 30 | A **voice bank belongs to the character**: lines cut from all its confirmed appearances into files kept with the work; shipped to voice jobs as files | Better clones across episodes; the voice survives without the media and travels |
+| 31 | Works travel as **`.lbwork`** zips; import matches by uid and never overwrites people's decisions; missing media are re-fetched from the origin and only separated, never re-transcribed | Portable, idempotent, safe |
+| 32 | Package media default: voice stems as Opus (none / FLAC optional); settings (aligners) are reported, never written on import | Size vs. re-separation cost; the receiver's machine is theirs |

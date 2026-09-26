@@ -13,18 +13,20 @@ Hard-won lessons: [LESSONS.md](LESSONS.md).
 | | |
 |---|---|
 | **Repo** | `D:\py_self\lang_bridge_test` → GitHub `LetPastorSpeakInYourLanguage/lang_recomp` (public, MIT) |
-| **`main`** | A1–A3 + Transcript layout merged locally (`453404f`); `origin/main` is still `d6d5e7c` — **not pushed** |
-| **Current branch** | `feat/series` (A4) — done, each commit verified alone; merge after the build pass |
-| **Plan phase** | A1–A4 **done**; next **A5** (cross-source characters) |
-| **Tests** | 71 pass (`python -m pytest -q tests`); web typecheck + build pass |
+| **`main`** | A1–A4 merged locally (`0f370d5`); `origin/main` is still `d6d5e7c` — **not pushed** |
+| **Branches** | `feat/cast` (A5: works, cast, banks, cast screen) → `feat/work-package` (A5b: packages, share/import screens, pivot) — each commit verified alone; merge both after the build pass |
+| **Plan phase** | A1–A5 **done**; next A6 (per-language keep-words), A7 (unknown-language path), then Phase B |
+| **Tests** | 82 pass (`python -m pytest -q tests`); web typecheck + build pass |
 
 ### Next steps, in order
 
-1. Merge `feat/series` into `main` after the build pass. Push only when the owner says so.
-2. With the owner: a real playlist whose videos share an intro, end to end (import both,
-   find the intro, confirm, dub episode 1's intro, render episode 2).
-3. Then `feat/cast-linking` (A5), A6, A7, then
-   Phase B (community server) — see PLAN.md.
+1. Finish the real run on "6 Minute English" (3 episodes, 0:00–2:30, owner's library): load
+   the other two episodes, confirm Neil/Pippa proposals, build banks, export (stems as Opus)
+   and import into the sandbox as "team B" + add Oromo. Then merge `feat/cast` and
+   `feat/work-package` into `main`; `sync_worker` (voice stage + separator fix changed).
+2. Recurring parts still need a real series with an identical intro (6 Minute English's
+   YouTube uploads have varying stings: no shared audio ≥ 3 s, correctly nothing proposed).
+3. Then A6, A7, then Phase B (community server) — see PLAN.md.
 
 ### Working method the owner asked for
 
@@ -63,6 +65,20 @@ work through **job folders** watched by workers (`worker/lb_worker/`):
 
 Test clip project: `camille-interview` (105 s, 28 lines, 2 speakers, all reviewed, 24 dubbed
 + 4 kept original). Export: `data/projects/camille-interview/export/`.
+
+## What A5 added (cast, banks, packages)
+
+- `app/cast.py` (characters, appearances, matching, merge/link/detach, move between works),
+  `app/banks.py` (voice banks), `app/package.py` (export/import), `docs/PACKAGE.md`.
+- Migration: standalone projects → single works; uids everywhere; old `characters` rows →
+  cast + confirmed appearances (camille: Samuel, Camille — unchanged downstream).
+- Web: Cast screen (`#/cast/<work>`), Share screen (`#/share/<work>`), Characters screen
+  proposals ("Sounds like Neil · 0.84 — Yes / Not them"), Home "Open a shared work",
+  Overview "Try again" for failed imports, Translate reference language.
+- Fixes found by the real run: downloads retry (ffmpeg reconnect, 3 attempts); the worker's
+  cached separator wrote every later job's stems into the first job's folder.
+- Real library now has series "6 Minute English" (course; 3 episodes clipped 0:00–2:30).
+  Active job folder switched to This PC; local worker started from the session.
 
 ## What A4 added (series, library, recurring parts)
 
