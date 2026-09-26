@@ -1,0 +1,23 @@
+# Your projects, database, settings and exports: never published.
+data/
+
+# Media downloaded during experiments (other people's content).
+spikes/voice_bakeoff/data/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv*/
+
+# Web
+web/node_modules/
+web/dist/
+*.tsbuildinfo
+
+# Editor / agent local state
+.claude/settings.local.json
+
+# Private planning notes (remove these lines to publish them)
+Lang-Bridge .md
+Lang-Bridge  (1).md

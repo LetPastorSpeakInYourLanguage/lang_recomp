@@ -1,0 +1,66 @@
+/* IBM Plex Sans for language, IBM Plex Mono for quantities, Noto Sans Ethiopic for
+   Amharic. Self-hosted so the app works offline. Colours are CSS variables, so
+   flipping data-theme on <html> re-themes everything. */
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-sans/600.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+@import "@fontsource/noto-sans-ethiopic/400.css";
+@import "@fontsource/noto-sans-ethiopic/500.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg: #e9eef4; --panel: #ffffff; --panel2: #f3f6fa; --panel3: #e7eef5;
+    --border: #d2dbe5; --border2: #b7c4d2; --text: #0d1922; --dim: #57697a; --faint: #8496a6;
+    --accent: #0b69b0; --accent2: #1183d6; --soft: #e1eefa; --sel: #d5e7f7;
+    --top: #0a4e86; --topfg: #dceaf6;
+    --good: #12735c; --goodbg: #ddf0ea; --warn: #9c5c0b; --warnbg: #faeedc; --bad: #a83236; --badbg: #f8e4e5;
+    --cross: #6b4e9e; --crossbg: #ede6f6; --crosspanel: #f6f2fb;
+    --topfill: rgba(255, 255, 255, 0.12); --topfill2: rgba(255, 255, 255, 0.08);
+    --topline: rgba(255, 255, 255, 0.14); --topline2: rgba(255, 255, 255, 0.2);
+    --topsel: rgba(255, 255, 255, 0.92); --topdim: rgba(255, 255, 255, 0.82);
+    /* Character colours: distinguishable, readable as text on panel. */
+    --s0: #b4532a; --s1: #0b69b0; --s2: #12735c; --s3: #6b4e9e;
+    --s4: #9c5c0b; --s5: #a83260; --s6: #2f7d8c; --s7: #5b6b12;
+    --font-scale: 1;
+    --font-family-sans: "IBM Plex Sans", system-ui, sans-serif;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0d131a; --panel: #151d25; --panel2: #111820; --panel3: #1a232c;
+    --border: #26313c; --border2: #37444f; --text: #dce6ef; --dim: #92a3b3; --faint: #69798a;
+    --accent: #4fa6e8; --accent2: #7cc2f5; --soft: #132b3b; --sel: #1c3446;
+    --top: #0a1720; --topfg: #cfe0ee;
+    --good: #3eae8e; --goodbg: #122c26; --warn: #d0902f; --warnbg: #2e2314; --bad: #e0696d; --badbg: #31191b;
+    --cross: #a98fd8; --crossbg: #251d33; --crosspanel: #1d1728;
+    --s0: #e08a5f; --s1: #4fa6e8; --s2: #3eae8e; --s3: #a98fd8;
+    --s4: #d0902f; --s5: #e07aa0; --s6: #5fbccc; --s7: #a9bd4a;
+  }
+  * { box-sizing: border-box; }
+  html, body, #root { margin: 0; padding: 0; height: 100%; background: var(--bg); color: var(--text); }
+  body {
+    font-family: var(--font-family-sans);
+    font-size: calc(13px * var(--font-scale, 1));
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
+  input, button, select, textarea { font-family: inherit; font-size: inherit; color: inherit; }
+  button { cursor: pointer; }
+  button:disabled { cursor: default; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  ::-webkit-scrollbar { width: 11px; height: 11px; }
+  ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 6px; border: 3px solid transparent; background-clip: content-box; }
+  ::-webkit-scrollbar-track { background: transparent; }
+}
+
+@layer components {
+  .field {
+    @apply h-24 border border-border2 bg-panel rounded-3 text-11.5 px-7 outline-none;
+  }
+  .field:focus { border-color: var(--accent); }
+  .label { @apply text-9.5 uppercase tracking-label text-faint font-semibold; }
+}

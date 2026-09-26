@@ -1,0 +1,407 @@
+"""Project lifecycle: import -> analyze (Colab) -> ingest -> translate.
+
+Each step is a plain function the API calls; long ones run as local tasks.
+"""
+from __future__ import annotations
+
+import json
+import re
+import shutil
+import subprocess
+import time
+from pathlib import Path
+
+from . import db, settings, tasks
+from .jobs.drive_queue import DriveQueue
+from .translate.ethiopic import AM_SYL_PER_S, budget
+from .translate.google_batch import GoogleBatchTranslator
+from .interjections import effective_mode, keep_words, suggest_keep
+from .translate.sentences import sentences as regroup
+
+ANALYSIS = ("separate", "asr", "diarize")
+_queues: dict[str, DriveQueue] = {}
+
+
+def queue(root_id: str | None = None) -> DriveQueue:
+    """The job queue in a configured job folder (default: the active one)."""
+    r = settings.root(root_id)
+    q = _queues.get(r["path"])
+    if q is None:
+        q = _queues[r["path"]] = DriveQueue(r["path"])
+    return q
+
+
+def pdir(pid: str) -> Path:
+    d = db.DATA / "projects" / pid
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def slug(name: str) -> str:
+    s = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:40] or "project"
+    base, n = s, 2
+    while db.row("SELECT id FROM projects WHERE id=?", s):
+        s, n = f"{base}-{n}", n + 1
+    return s
+
+
+# ---- import ------------------------------------------------------------------------------
+def create(name: str, source: str, clip_start: float | None, clip_end: float | None,
+           max_speakers: int | None, src_lang: str = "en", tgt_lang: str = "am") -> dict:
+    pid = slug(name)
+    db.run("INSERT INTO projects (id,name,source,src_lang,tgt_lang,max_speakers,clip_start,clip_end,created)"
+           " VALUES (?,?,?,?,?,?,?,?,?)", pid, name, source, src_lang, tgt_lang, max_speakers,
+           clip_start, clip_end, time.time())
+    tasks.start(pid, "import", _import, pid)
+    return get(pid)
+
+
+def _import(pid: str, update) -> None:
+    p = get(pid)
+    d = pdir(pid)
+    video = d / "clip.mp4"
+    src = p["source"].strip()
+    if re.match(r"https?://", src):
+        update(0.05, "downloading with yt-dlp")
+        cmd = ["yt-dlp", "--js-runtimes", "node", "-f", "bv*[height<=720]+ba/b[height<=720]",
+               "--merge-output-format", "mp4", "--write-auto-subs", "--sub-langs", p["src_lang"],
+               "--sub-format", "vtt", "-o", str(d / "clip.%(ext)s")]
+        if p["clip_start"] is not None or p["clip_end"] is not None:
+            cmd += ["--download-sections", f"*{p['clip_start'] or 0}-{p['clip_end'] or 'inf'}",
+                    "--force-keyframes-at-cuts"]
+        _run(cmd + ["--", src])
+    else:
+        update(0.05, "copying local file")
+        path = Path(src)
+        if p["clip_start"] is not None or p["clip_end"] is not None:
+            _run(["ffmpeg", "-v", "error", "-y", "-ss", str(p["clip_start"] or 0),
+                  *(["-to", str(p["clip_end"])] if p["clip_end"] else []), "-i", str(path),
+                  "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", str(video)])
+        else:
+            shutil.copy2(path, video)
+    update(0.7, "extracting audio")
+    audio = d / "clip.flac"
+    _run(["ffmpeg", "-v", "error", "-y", "-i", str(video), "-vn", "-ac", "1", "-ar", "44100",
+          "-c:a", "flac", str(audio)])
+    dur = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                                "-of", "csv=p=0", str(video)], capture_output=True, text=True).stdout or 0)
+    db.run("UPDATE projects SET video=?, audio=?, duration=? WHERE id=?", str(video), str(audio), dur, pid)
+    update(0.85, f"sending audio to {settings.root()['name']}")
+    analyze(pid)
+
+
+def _run(cmd: list[str]) -> None:
+    p = subprocess.run(cmd, capture_output=True, text=True)
+    if p.returncode:
+        raise RuntimeError(f"{Path(cmd[0]).name} exit {p.returncode}: {p.stderr[-500:]}")
+
+
+# ---- analysis on Colab -------------------------------------------------------------------
+def analyze(pid: str, root_id: str | None = None) -> dict:
+    p = get(pid)
+    r = settings.root(root_id)
+    q = queue(r["id"])
+    audio = q.put_media(pid, p["audio"])
+    # large-v3-turbo: nearly large-v3 accuracy at a fraction of the CPU time.
+    model = "large-v3" if r["kind"] == "colab" else "large-v3-turbo"
+    sep = q.submit("separate", {"project": pid}, shared=[audio])
+    asr = q.submit("asr", {"project": pid, "model": model, "language": p["src_lang"]},
+                   shared=[q.out_ref(sep, "vocals.flac")], after=[sep])
+    words_ref, words_job = q.out_ref(asr, "asr.json"), asr
+    jobs = [("separate", sep), ("asr", asr)]
+    model_id = settings.aligner(p["src_lang"])
+    if model_id:  # pin every word to the audio before speakers are assigned
+        al = q.submit("align", {"project": pid, "model": model_id, "language": p["src_lang"]},
+                      shared=[q.out_ref(sep, "vocals.flac"), q.out_ref(asr, "asr.json")], after=[sep, asr])
+        words_ref, words_job = q.out_ref(al, "aligned.json"), al
+        jobs.append(("align", al))
+    dia = diarize(pid, q, sep, words_ref, words_job, p["max_speakers"])
+    jobs.append(("diarize", dia))
+    for stage, jid in jobs:
+        record_job(pid, jid, stage, role="analysis", root=r["id"])
+    return dict(jobs) | {"root": r["id"]}
+
+
+def diarize(pid: str, q: DriveQueue, sep: str, words_ref: str, words_job: str, max_speakers: int | None) -> str:
+    params = {"project": pid} | ({"max_speakers": max_speakers} if max_speakers else {})
+    return q.submit("diarize", params, shared=[q.out_ref(sep, "vocals.flac"), words_ref], after=[sep, words_job])
+
+
+def realign(pid: str, root_id: str | None = None) -> dict:
+    """Align the existing transcript's words (no re-separation or re-transcription)
+    and re-assign speakers with the aligned times. Load results when it finishes."""
+    p = get(pid)
+    model_id = settings.aligner(p["src_lang"])
+    if not model_id:
+        raise RuntimeError(f"no aligner set for '{p['src_lang']}' (Folders & settings)")
+    sep_j, asr_j = latest_job(pid, "separate"), latest_job(pid, "asr")
+    if not sep_j or not asr_j:
+        raise RuntimeError("run the analysis first")
+    r = settings.root(root_id)
+    q = queue(r["id"])
+    # The inputs may live in another job folder: copy them in as this job's own files.
+    vocals = job_queue(sep_j).out_dir(sep_j["id"]) / "vocals.flac"
+    words = job_queue(asr_j).out_dir(asr_j["id"]) / "asr.json"
+    media = q.put_media(pid, vocals)
+    al = q.submit("align", {"project": pid, "model": model_id, "language": p["src_lang"]}, files=[words], shared=[media])
+    dia = q.submit("diarize", {"project": pid} | ({"max_speakers": p["max_speakers"]} if p["max_speakers"] else {}),
+                   shared=[media, q.out_ref(al, "aligned.json")], after=[al])
+    record_job(pid, al, "align", role="analysis", root=r["id"])
+    record_job(pid, dia, "diarize", role="analysis", root=r["id"])
+    return {"align": al, "diarize": dia, "model": model_id, "root": r["id"]}
+
+
+def record_job(pid: str, jid: str, stage: str, role: str = "", root: str = "colab") -> None:
+    db.run("INSERT OR REPLACE INTO jobs (id,project_id,stage,created,role,root) VALUES (?,?,?,?,?,?)",
+           jid, pid, stage, time.time(), role, root)
+
+
+def latest_job(pid: str, stage: str) -> dict | None:
+    return db.row("SELECT * FROM jobs WHERE project_id=? AND stage=? ORDER BY created DESC LIMIT 1", pid, stage)
+
+
+def job_queue(job: dict) -> DriveQueue:
+    return queue(job.get("root") or "colab")
+
+
+def jobs(pid: str | None = None) -> list[dict]:
+    out = []
+    sql = "SELECT * FROM jobs" + (" WHERE project_id=?" if pid else "") + " ORDER BY created DESC"
+    for j in db.rows(sql, *([pid] if pid else [])):
+        try:
+            st = job_queue(j).status(j["id"])
+        except OSError:
+            st = {"state": "unreachable", "error": f"job folder {settings.root(j.get('root'))['path']} not reachable"}
+        out.append(j | {"state": st.get("state"), "progress": st.get("progress"),
+                        "error": st.get("error"), "result": st.get("result"),
+                        "elapsed_s": st.get("elapsed_s"), "heartbeat": st.get("heartbeat")})
+    return out
+
+
+# ---- ingest ------------------------------------------------------------------------------
+PALETTE = 8
+
+
+def ingest(pid: str) -> dict:
+    """Pull finished analysis into the DB: sentences, characters, local stems."""
+    js = {s: latest_job(pid, s) for s in ANALYSIS}
+    for s, j in js.items():
+        if not j or job_queue(j).status(j["id"]).get("state") != "done":
+            raise RuntimeError(f"{s} is not done yet")
+    d = pdir(pid)
+    sep, dz = js["separate"], js["diarize"]
+    for name in ("vocals.flac", "background.flac"):
+        shutil.copy2(job_queue(sep).out_dir(sep["id"]) / name, d / name)
+    out = job_queue(dz).out_dir(dz["id"])
+    asr = json.loads((out / "asr_spk.json").read_text(encoding="utf-8"))
+    dia = json.loads((out / "diarization.json").read_text(encoding="utf-8"))
+    (d / "asr_spk.json").write_text(json.dumps(asr, ensure_ascii=False), encoding="utf-8")
+    (d / "diarization.json").write_text(json.dumps(dia), encoding="utf-8")
+    old = db.rows("SELECT * FROM sentences WHERE project_id=?", pid)
+    locked, sents = keep_reviewed(old, regroup(asr))
+    kept = carry_over([o for o in old if not o["reviewed"]], sents) | {o["id"]: o["id"] for o in locked}
+    db.run("DELETE FROM sentences WHERE project_id=? AND reviewed=0", pid)
+    db.many("INSERT INTO sentences (project_id,id,speaker,start,end,text,words,am,am_locked,chapter_break,reviewed)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            [(pid, s["id"], s["speaker"], s["start"], s["end"], s["text"], json.dumps(s["words"]), s.get("am", ""),
+              s.get("am_locked", 0), s.get("chapter_break", 0), s.get("reviewed", 0)) for s in sents])
+    _remap_takes(pid, kept)
+    sents = locked + sents
+    talk: dict[str, float] = {}
+    for t in dia["exclusive"]:
+        talk[t["speaker"]] = talk.get(t["speaker"], 0) + t["end"] - t["start"]
+    existing = {c["label"]: c for c in db.rows("SELECT * FROM characters WHERE project_id=?", pid)}
+    for i, label in enumerate(sorted(talk)):
+        if label in existing:
+            db.run("UPDATE characters SET talk_s=? WHERE project_id=? AND label=?", talk[label], pid, label)
+        else:
+            db.run("INSERT INTO characters (project_id,label,name,gender,important,color,talk_s)"
+                   " VALUES (?,?,?,?,1,?,?)", pid, label, f"Speaker {i + 1}", None, i % PALETTE, talk[label])
+    db.set_meta(pid, ingested_at=time.time())
+    return {"sentences": len(sents), "characters": len(talk), "carried_over": len(kept)}
+
+
+def keep_reviewed(old: list[dict], new: list[dict], max_overlap: float = 0.3) -> tuple[list[dict], list[dict]]:
+    """Reviewed lines are the person's final word: a reload never changes them (text,
+    speaker, times, merges, translation, takes). New lines that overlap a reviewed
+    line by more than ``max_overlap`` of their own length are dropped; the rest get
+    fresh ids after the highest id in use. Returns (reviewed lines, new lines to add)."""
+    locked = [o for o in old if o["reviewed"]]
+    next_id = max([o["id"] for o in old] + [0]) + 1
+    out = []
+    for s in new:
+        span = max(1e-6, s["end"] - s["start"])
+        covered = sum(max(0.0, min(s["end"], o["end"]) - max(s["start"], o["start"])) for o in locked)
+        if covered / span > max_overlap:
+            continue
+        s["id"] = next_id
+        next_id += 1
+        out.append(s)
+    return locked, out
+
+
+def carry_over(old: list[dict], new: list[dict], min_iou: float = 0.6) -> dict[int, int]:
+    """Re-running analysis (e.g. re-aligning) must not throw away the work done on
+    the lines. Each new line takes over from the old line it overlaps most in time,
+    if they share at least ``min_iou`` of their combined span: translation and its
+    lock, reviewed mark, chapter break, and, for lines marked reviewed, the edited
+    text and speaker too. Returns {old id: new id} for the lines carried over."""
+    kept: dict[int, int] = {}
+    used: set[int] = set()
+    for s in new:
+        best, best_iou = None, min_iou
+        for o in old:
+            if o["id"] in used:
+                continue
+            inter = min(s["end"], o["end"]) - max(s["start"], o["start"])
+            if inter <= 0:
+                continue
+            iou = inter / (max(s["end"], o["end"]) - min(s["start"], o["start"]))
+            if iou >= best_iou:
+                best, best_iou = o, iou
+        if best is None:
+            continue
+        used.add(best["id"])
+        kept[best["id"]] = s["id"]
+        s.update(am=best["am"], am_locked=best["am_locked"], chapter_break=best["chapter_break"],
+                 reviewed=best["reviewed"])
+        if best["reviewed"]:  # the person confirmed this line: their wording and speaker win
+            s.update(text=best["text"], speaker=best["speaker"])
+    return kept
+
+
+def _remap_takes(pid: str, kept: dict[int, int]) -> None:
+    """Voiced takes follow their line to its new id (via a temporary offset, so
+    renumbering can never collide with an id still in use)."""
+    if not db.row("SELECT name FROM sqlite_master WHERE type='table' AND name='takes'"):
+        return
+    off = 1_000_000
+    db.run("UPDATE takes SET sentence_id = sentence_id + ? WHERE project_id=?", off, pid)
+    for old_id, new_id in kept.items():
+        db.run("UPDATE takes SET sentence_id=? WHERE project_id=? AND sentence_id=?", new_id, pid, old_id + off)
+
+
+# ---- read models -------------------------------------------------------------------------
+def get(pid: str) -> dict:
+    p = db.row("SELECT * FROM projects WHERE id=?", pid)
+    if not p:
+        raise KeyError(pid)
+    p["meta"] = json.loads(p["meta"] or "{}")
+    return p
+
+
+def summary(pid: str) -> dict:
+    p = get(pid)
+    n = db.row("SELECT COUNT(*) n, SUM(am<>'') tr, SUM(reviewed) rv, SUM(chapter_break) ch"
+               " FROM sentences WHERE project_id=?", pid)
+    kept_lines = sum(1 for s in sentences(pid) if s["mode"] == "keep")
+    chars = db.rows("SELECT * FROM characters WHERE project_id=?", pid)
+    js = jobs(pid)
+    analysis = {s: next((j["state"] for j in js if j["stage"] == s), None) for s in ANALYSIS}
+    p["counts"] = {"sentences": n["n"] or 0, "translated": n["tr"] or 0, "reviewed": n["rv"] or 0, "kept": kept_lines,
+                   "chapters": (n["ch"] or 0) + (1 if n["n"] else 0), "characters": len(chars),
+                   "genders_set": sum(1 for c in chars if c["gender"])}
+    p["analysis"] = analysis
+    p["import"] = next((t for t in tasks.list_for(pid) if t["kind"] == "import"), None)
+    return p
+
+
+def sentences(pid: str) -> list[dict]:
+    out = db.rows("SELECT * FROM sentences WHERE project_id=? ORDER BY start", pid)
+    rate = db.meta(pid).get("am_rate", AM_SYL_PER_S)
+    kw = keep_words()
+    for s in out:
+        s.pop("words", None)  # only merge/split need them; keep the list payload small
+        s["slot_s"] = round(s["end"] - s["start"], 3)
+        s["mode_set"] = s["mode"]  # the person's explicit choice, or None
+        s["mode"] = effective_mode(s["mode"], s["text"], s["slot_s"], kw)
+        s["mode_suggested"] = "keep" if suggest_keep(s["text"], s["slot_s"], kw) else "dub"
+        s["budget"] = budget(s["am"], s["slot_s"], rate) if s["am"] else None
+    return out
+
+
+def chapters(sents: list[dict]) -> list[list[dict]]:
+    out: list[list[dict]] = [[]]
+    for s in sents:
+        if s["chapter_break"] and out[-1]:
+            out.append([])
+        out[-1].append(s)
+    return [c for c in out if c]
+
+
+# ---- translation -------------------------------------------------------------------------
+def translate(pid: str, chapter: int | None = None, force: bool = False) -> str:
+    return tasks.start(pid, "translate", _translate, pid, chapter, force)
+
+
+def _translate(pid: str, chapter: int | None, force: bool, update) -> None:
+    p = get(pid)
+    chs = chapters(sentences(pid))
+    todo = [chs[chapter]] if chapter is not None else chs
+    tr = GoogleBatchTranslator(p["src_lang"], p["tgt_lang"], context=2)
+    for i, ch in enumerate(todo):
+        update(i / len(todo), f"chapter {i + 1}/{len(todo)}")
+        # Context never crosses a chapter break: a chapter is one topic.
+        res = tr.translate([{"id": s["id"], "text": s["text"]} for s in ch])
+        for s in ch:
+            if s["am_locked"] and not force:
+                continue
+            db.run("UPDATE sentences SET am=? WHERE project_id=? AND id=?", res.get(s["id"], ""), pid, s["id"])
+
+
+# ---- merge / split -----------------------------------------------------------------------
+def _words(pid: str, s: dict) -> list[dict]:
+    """A line's word timings; lines ingested before they were stored get them back
+    from the saved transcript by time range."""
+    w = json.loads(s.get("words") or "[]")
+    if w:
+        return w
+    f = pdir(pid) / "asr_spk.json"
+    if not f.exists():
+        return []
+    asr = json.loads(f.read_text(encoding="utf-8"))
+    return [{"w": x["w"], "start": x["start"], "end": x["end"]} for seg in asr["segments"]
+            for x in seg.get("words", []) if x["start"] >= s["start"] - 0.02 and x["end"] <= s["end"] + 0.02]
+
+
+def merge_next(pid: str, sid: int) -> dict:
+    """Join a line with the one after it: one speaker (the longer part's), one text,
+    one time slot. The translation is cleared: a merged line needs a fresh one."""
+    rows = db.rows("SELECT * FROM sentences WHERE project_id=? ORDER BY start", pid)
+    i = next((k for k, r in enumerate(rows) if r["id"] == sid), None)
+    if i is None or i + 1 >= len(rows):
+        raise ValueError("no following line to merge with")
+    a, b = rows[i], rows[i + 1]
+    speaker = a["speaker"] if (a["end"] - a["start"]) >= (b["end"] - b["start"]) else b["speaker"]
+    db.run("UPDATE sentences SET speaker=?, end=?, text=?, words=?, am='', am_locked=0, reviewed=0"
+           " WHERE project_id=? AND id=?", speaker, max(a["end"], b["end"]),
+           f"{a['text'].rstrip()} {b['text'].lstrip()}".strip(),
+           json.dumps(_words(pid, a) + _words(pid, b)), pid, a["id"])
+    db.run("DELETE FROM sentences WHERE project_id=? AND id=?", pid, b["id"])
+    return {"kept": a["id"], "removed": b["id"]}
+
+
+def split(pid: str, sid: int, word_index: int) -> dict:
+    """Cut a line before its ``word_index``-th word (counting the words of the text
+    as shown). Times come from the word timings when they still match the text;
+    otherwise the slot is divided in proportion to the text."""
+    s = db.row("SELECT * FROM sentences WHERE project_id=? AND id=?", pid, sid)
+    if not s:
+        raise ValueError("no such line")
+    tokens = s["text"].split()
+    if not 0 < word_index < len(tokens):
+        raise ValueError("the split point must be between two words")
+    words = _words(pid, s)
+    if len(words) == len(tokens):
+        cut_end, cut_start = words[word_index - 1]["end"], words[word_index]["start"]
+        w1, w2 = words[:word_index], words[word_index:]
+    else:
+        frac = len(" ".join(tokens[:word_index])) / max(1, len(s["text"]))
+        cut_end = cut_start = round(s["start"] + frac * (s["end"] - s["start"]), 3)
+        w1, w2 = [], []
+    new_id = (db.row("SELECT MAX(id) m FROM sentences WHERE project_id=?", pid)["m"] or 0) + 1
+    db.run("UPDATE sentences SET end=?, text=?, words=?, am='', am_locked=0, reviewed=0"
+           " WHERE project_id=? AND id=?", cut_end, " ".join(tokens[:word_index]), json.dumps(w1), pid, sid)
+    db.run("INSERT INTO sentences (project_id,id,speaker,start,end,text,words) VALUES (?,?,?,?,?,?,?)",
+           pid, new_id, s["speaker"], cut_start, s["end"], " ".join(tokens[word_index:]), json.dumps(w2))
+    return {"first": sid, "second": new_id}
