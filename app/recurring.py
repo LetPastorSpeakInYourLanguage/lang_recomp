@@ -174,3 +174,57 @@ def _known_spans(series_id: str) -> list[dict]:
             spans += c["segments"]
             spans += [o for o in occurrences(c["id"]) if o["status"] != "rejected"]
     return spans
+
+
+# ---- reuse in dubbing --------------------------------------------------------------------
+EDGE_S = 0.3  # a line may overhang an occurrence by this much and still be inside it
+
+
+def link(pid: str, sents: list[dict], lang: str) -> int:
+    """Mark the lines of ``pid`` that lie inside a confirmed occurrence as ``linked`` to
+    the matching line of the part's origin, and give them the origin's translation into
+    ``lang``: a recurring part is translated and voiced once, at its origin. Lines only
+    partly inside stay ordinary. Returns how many lines were linked."""
+    n = 0
+    for o in confirmed_in(pid):
+        seg, off = o["origin"], o["offset"]
+        name = (db.row("SELECT name FROM projects WHERE id=?", seg["source_id"]) or {}).get("name")
+        olines = db.rows("SELECT s.id, s.start, s.end, t.text AS tr FROM sentences s LEFT JOIN translations t"
+                         " ON t.project_id=s.project_id AND t.sentence_id=s.id AND t.lang=?"
+                         " WHERE s.project_id=? AND s.start >= ? AND s.end <= ?",
+                         lang, seg["source_id"], seg["start"] - EDGE_S, seg["end"] + EDGE_S)
+        for s in sents:
+            if s.get("linked") or s["start"] < o["start"] - EDGE_S or s["end"] > o["end"] + EDGE_S:
+                continue
+            if seg["source_id"] == pid and seg["start"] - EDGE_S <= s["start"] and s["end"] <= seg["end"] + EDGE_S:
+                continue  # the origin itself
+            a, b = s["start"] - off, s["end"] - off  # this line's time at the origin
+            best, best_ov = None, 0.5 * (b - a)
+            for ol in olines:
+                ov = min(b, ol["end"]) - max(a, ol["start"])
+                if ov > best_ov:
+                    best, best_ov = ol, ov
+            s["linked"] = {"clip_id": o["clip_id"], "title": o["title"], "kind": o["kind"],
+                           "source_id": seg["source_id"], "source_name": name, "line_id": best["id"] if best else None}
+            s["tr"] = (best["tr"] or "") if best else ""
+            s["tr_locked"], s["tr_provenance"] = 1, "linked"
+            n += 1
+    return n
+
+
+def origin_takes(sents: list[dict], lang: str) -> dict[int, dict]:
+    """For linked lines: {local line id: the origin line's chosen take in ``lang``}."""
+    from . import voice  # (voice imports project)
+    by_source: dict[str, dict[int, dict]] = {}
+    out = {}
+    for s in sents:
+        ln = s.get("linked")
+        if not ln or ln["line_id"] is None:
+            continue
+        src = ln["source_id"]
+        if src not in by_source:
+            by_source[src] = {t["sentence_id"]: t for t in voice.lines_takes(src, chosen_only=True, lang=lang)}
+        t = by_source[src].get(ln["line_id"])
+        if t:
+            out[s["id"]] = t
+    return out

@@ -70,6 +70,12 @@ export function PlayButton({ src, start, end, k, size = 20 }: { src: string; sta
   );
 }
 
+/** "from Intro · Episode 1": this line belongs to a recurring part dubbed at its origin. */
+export function LinkedTag({ linked }: { linked: { title: string; source_name: string | null } }) {
+  return <Tag tone="cross" title="Part of a confirmed recurring part: translated and voiced once, at its origin, and reused here">
+    from {linked.title}{linked.source_name ? ` · ${linked.source_name}` : ""}</Tag>;
+}
+
 export function SpeakerDot({ color }: { color: number }) {
   return <span className={`inline-block w-8 h-8 rounded-full bg-s${color % 8} flex-none`} />;
 }

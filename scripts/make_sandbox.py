@@ -7,13 +7,18 @@ touching the real one:
 It holds one synthetic show of three episodes (audio only, a few transcript lines
 each). Every episode opens with the same 15 s "intro" after a cold open of a
 different length and ends with the same 10 s "outro"; episode 3's copies are quieter
-and noisy. Nothing is downloaded and no worker is needed.
+and noisy. Each has stems (for Mix) and a line spoken inside the intro; episode 1's
+intro line is translated into Amharic and has a chosen take (a tone standing in for a
+voice), so a recurring intro can be dubbed once and heard reused in the others.
+Nothing is downloaded and no worker is needed.
 """
 from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -40,7 +45,7 @@ def main() -> None:
     DATA.mkdir(parents=True)
     os.environ["LANGBRIDGE_DATA"] = str(DATA)
     sys.path.insert(0, str(ROOT))
-    from app import db, series, tasks
+    from app import db, project, series, tasks
 
     tasks.start = lambda *a, **k: "sandbox"  # no import/download: audio is written below
     s = series.create("Sandbox show", "show", "en", ["am", "om"])
@@ -56,13 +61,26 @@ def main() -> None:
         wavfile.write(d / "clip.wav", SR, (audio / np.abs(audio).max() * 20000).astype(np.int16))
         dur = len(audio) / SR
         db.run("UPDATE projects SET audio=?, duration=? WHERE id=?", str(d / "clip.wav"), dur, p["id"])
-        lines = [(0.5, 3.0, f"Previously, in episode {k}."), (cold + 16, cold + 19, "Welcome back to the show."),
+        for stem, gain in (("vocals", 1.0), ("background", 0.3)):
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(d / "clip.wav"), "-af", f"volume={gain}",
+                            "-ac", "1", "-ar", "44100", str(d / f"{stem}.flac")], check=True)
+        lines = [(0.5, 3.0, f"Previously, in episode {k}."), (cold + 2, cold + 5, "This is the Sandbox show."),
+                 (cold + 16, cold + 19, "Welcome back to the show."),
                  (cold + 20, cold + 24, "Today we talk about hope."), (cold + 30, cold + 33, "Hope is a choice.")]
         for n, (a, b, t) in enumerate(lines, 1):
             db.run("INSERT INTO sentences (project_id,id,speaker,start,end,text) VALUES (?,?,?,?,?,?)",
                    p["id"], n, "SPEAKER_00", a, b, t)
         db.run("INSERT INTO characters (project_id,label,name,important,color) VALUES (?,?,?,1,0)",
                p["id"], "SPEAKER_00", "Host")
+        if k == 0:  # the intro line, dubbed once at the origin
+            project.set_translation(p["id"], 2, "am", "ይህ የሳንድቦክስ ትርኢት ነው።")
+            t = np.arange(int(2.5 * SR)) / SR
+            take = d / "takes" / "intro_line.wav"
+            take.parent.mkdir(exist_ok=True)
+            wavfile.write(take, SR, (np.sin(2 * np.pi * 440 * t) * np.hanning(len(t)) * 12000).astype(np.int16))
+            db.run("INSERT INTO takes (project_id,sentence_id,job_id,take,path,text,sim,cer,dur,dur_s,chosen,created,lang)"
+                   " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", p["id"], 2, "sandbox", 0, str(take), "ይህ የሳንድቦክስ ትርኢት ነው።",
+                   0.9, 0.1, 1.0, 2.5, 1, time.time(), "am")
     print(f"sandbox ready at {DATA}: series '{s['name']}' with 3 episodes")
 
 

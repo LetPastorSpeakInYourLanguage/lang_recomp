@@ -351,17 +351,21 @@ def set_translation(pid: str, sid: int, lang: str, text: str | None = None, lock
 def summary(pid: str) -> dict:
     p = get(pid)
     n = db.row("SELECT COUNT(*) n, SUM(reviewed) rv FROM sentences WHERE project_id=?", pid)
-    per_lang = {r["lang"]: r["n"] for r in db.rows(
-        "SELECT t.lang, COUNT(*) n FROM translations t JOIN sentences s ON s.project_id=t.project_id AND s.id=t.sentence_id"
-        " WHERE t.project_id=? AND t.text<>'' GROUP BY t.lang", pid)}
-    kept_lines = sum(1 for s in sentences(pid) if s["mode"] == "keep")
+    p["targets"] = targets(pid)
+    # translated = has words in that language, own or (linked lines) the recurring part's
+    per_lang, kept_lines, linked = {}, 0, 0
+    for t in p["targets"]:
+        ss = sentences(pid, t)
+        per_lang[t] = sum(1 for s in ss if s["tr"])
+        if t == p["tgt_lang"]:
+            kept_lines = sum(1 for s in ss if s["mode"] == "keep")
+            linked = sum(1 for s in ss if s["linked"])
     chars = db.rows("SELECT * FROM characters WHERE project_id=?", pid)
     js = jobs(pid)
     analysis = {s: next((j["state"] for j in js if j["stage"] == s), None) for s in ANALYSIS}
-    p["targets"] = targets(pid)
     p["counts"] = {"sentences": n["n"] or 0, "translated": per_lang.get(p["tgt_lang"], 0),
                    "translated_by_lang": {t: per_lang.get(t, 0) for t in p["targets"]},
-                   "reviewed": n["rv"] or 0, "kept": kept_lines,
+                   "reviewed": n["rv"] or 0, "kept": kept_lines, "linked": linked,
                    "chapters": len(chaps.ensure(pid)) if n["n"] else 0, "characters": len(chars),
                    "genders_set": sum(1 for c in chars if c["gender"])}
     p["analysis"] = analysis
@@ -386,6 +390,10 @@ def sentences(pid: str, lang: str | None = None) -> list[dict]:
     r = rate(pid, lang)
     kw = keep_words()
     chaps.assign(out, chaps.ensure(pid))
+    from . import recurring  # (imports project)
+    for s in out:
+        s["linked"] = None
+    recurring.link(pid, out, lang)  # lines of a confirmed recurring part take the origin's translation
     for s in out:
         s.pop("words", None)  # only merge/split need them; keep the list payload small
         for old in ("am", "am_locked"):
@@ -411,8 +419,10 @@ def translate(pid: str, lang: str | None = None, chapter: int | None = None, for
 
 def _translate(pid: str, lang: str, chapter: int | None, force: bool, update) -> None:
     p = get(pid)
-    todo = [lines for c, lines in chaps.group(sentences(pid, lang), chaps.ensure(pid))
+    # lines of a recurring part are translated once, at its origin
+    todo = [[s for s in lines if not s["linked"]] for c, lines in chaps.group(sentences(pid, lang), chaps.ensure(pid))
             if chapter is None or c["id"] == chapter]
+    todo = [lines for lines in todo if lines]
     tr = GoogleBatchTranslator(p["src_lang"], lang, context=2)
     for i, ch in enumerate(todo):
         update(i / len(todo), f"chapter {i + 1}/{len(todo)}")

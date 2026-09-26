@@ -1,7 +1,7 @@
 import { AlertTriangle, Check, FileText, Keyboard, Merge, Pause, Play, Scissors, Split } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, fmtTime, usePoll, type Chapter, type Character, type ClipKind, type Project, type Sentence } from "../api";
-import { Empty, SpeakerDot, Tag } from "../ui";
+import { Empty, LinkedTag, SpeakerDot, Tag } from "../ui";
 
 /** A line whose words drifted: Whisper dropped punctuation/capitals there, and the
  *  speaker boundary may be off by a word. Worth a listen. */
@@ -234,6 +234,7 @@ export default function Transcript({ project, onChanged }: { project: Project; o
                   <div onDoubleClick={() => setEditing(s.id)} className={`text-12.5 leading-relaxed ${s.reviewed ? "text-text" : "text-text"}`}>{s.text}</div>
                 )}
                 <div className="flex items-center gap-5 pt-2">
+                  {s.linked && <LinkedTag linked={s.linked} />}
                   {suspicious(s) && !s.reviewed && <span title="Unpunctuated line — the speaker boundary may be off by a word" className="text-warn"><AlertTriangle size={12} /></span>}
                   <span className="text-9.5 font-mono text-faint">{s.slot_s.toFixed(1)}s</span>
                   <button onClick={(e) => { e.stopPropagation(); setSel(i); setEditing(s.id); setNote("Place the cursor where the line should break, then press Ctrl+Enter."); }}

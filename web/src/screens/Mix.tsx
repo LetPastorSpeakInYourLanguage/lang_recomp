@@ -142,7 +142,8 @@ export default function Mix({ project, onChanged }: { project: Project; onChange
                 return (
                   <tr key={l.id} onClick={() => seek(l.start)} className="border-b border-border last:border-0 cursor-pointer hover:bg-panel2 align-top">
                     <td className="px-10 py-5 font-mono text-dim">{fmtTime(l.slot_start)}</td>
-                    <td className="px-10 py-5 max-w-[460px]"><div className="font-eth text-12.5">{l.tr}</div><div className="text-10.5 text-faint truncate">{l.src}</div></td>
+                    <td className="px-10 py-5 max-w-[460px]"><div className="font-eth text-12.5">{l.tr}</div><div className="text-10.5 text-faint truncate">{l.src}</div>
+                      {l.linked && <div className="text-9.5 text-cross">reused from {l.linked}</div>}</td>
                     <td className="px-10 py-5 font-mono">{l.dur.toFixed(1)}s<span className="text-faint"> / {(l.slot_end - l.slot_start).toFixed(1)}s</span></td>
                     <td className="px-10 py-5 font-mono text-dim">{fmtTime(l.start)}–{fmtTime(l.end)}</td>
                     <td className="px-10 py-5 font-mono">{l.factor > 1.001 ? `+${Math.round((l.factor - 1) * 100)}%` : "–"}</td>

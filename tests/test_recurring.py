@@ -73,3 +73,44 @@ def test_discovery_proposes_the_shared_intro_until_it_is_cut(show):
     assert all(abs(x["origin"]["start"] - 8.0) > 1 for x in recurring.discover(sid))  # already cut: not proposed again
     assert recurring.confirm_all(c["id"]) == 0 and len(recurring.search(c["id"])) == 2
     assert recurring.confirm_all(c["id"]) == 2
+
+
+def test_confirmed_parts_are_translated_and_voiced_once(show, monkeypatch):
+    from app import project
+    sid, ids = show
+    e1, e2 = ids["e1"], ids["e2"]
+    # the intro has a spoken line: 10–12 s in episode 1, so 22–24 s in episode 2 (intro at 20 s there)
+    for pid, (a, b) in ((e1, (10.0, 12.0)), (e2, (22.1, 24.0))):
+        db.run("INSERT INTO sentences (project_id,id,speaker,start,end,text) VALUES (?,?,?,?,?,?)", pid, 1, "A", a, b, "Welcome to the show.")
+        db.run("INSERT INTO sentences (project_id,id,speaker,start,end,text) VALUES (?,?,?,?,?,?)", pid, 2, "A", 40.0, 42.0, "Today: hope.")
+        db.run("INSERT INTO sentences (project_id,id,speaker,start,end,text) VALUES (?,?,?,?,?,?)", pid, 3, "A", 34.5, 36.0, "Half in.")
+    project.set_translation(e1, 1, "am", "ወደ ትርኢቱ እንኳን በደህና መጡ።")
+    db.run("INSERT INTO takes (project_id,sentence_id,job_id,take,path,text,chosen,created,lang) VALUES (?,?,?,?,?,?,?,?,?)",
+           e1, 1, "j1", 0, "take.wav", "ወደ ትርኢቱ እንኳን በደህና መጡ።", 1, time.time(), "am")
+    c = library.create_clip(e1, 8.0, 23.0, "Intro", "intro")
+    for o in recurring.search(c["id"]):
+        if o["source_id"] == e2:
+            recurring.set_status(o["id"], "confirmed")
+
+    s2 = {s["id"]: s for s in project.sentences(e2, "am")}
+    assert s2[1]["linked"]["source_id"] == e1 and s2[1]["linked"]["line_id"] == 1
+    assert s2[1]["tr"] == "ወደ ትርኢቱ እንኳን በደህና መጡ።" and s2[1]["tr_provenance"] == "linked"
+    assert s2[2]["linked"] is None and s2[3]["linked"] is None  # after the intro / only partly inside it
+    assert all(s["linked"] is None for s in project.sentences(e1, "am"))  # the origin is not linked to itself
+    assert project.summary(e2)["counts"]["linked"] == 1 and project.summary(e2)["counts"]["translated"] == 1
+
+    batches = []
+
+    class Fake:
+        def __init__(self, *a, **k): pass
+
+        def translate(self, items):
+            batches.append([x["id"] for x in items])
+            return {x["id"]: "t" for x in items}
+
+    monkeypatch.setattr(project, "GoogleBatchTranslator", Fake)
+    project._translate(e2, "am", None, False, lambda *a: None)
+    assert batches == [[3, 2]]  # line 1 is not machine-translated here: it is the intro's
+
+    takes = recurring.origin_takes(project.sentences(e2, "am"), "am")
+    assert list(takes) == [1] and takes[1]["path"] == "take.wav"

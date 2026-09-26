@@ -19,7 +19,7 @@ export interface Project {
   /** the series this source belongs to (null = standalone), its place in it, and its YouTube id */
   series_id: string | null; position: number | null; origin_id: string | null; published: string | null;
   counts: { sentences: number; translated: number; translated_by_lang: Record<string, number>; reviewed: number; chapters: number;
-    characters: number; genders_set: number; kept: number };
+    characters: number; genders_set: number; kept: number; linked: number };
   /** target languages, primary first */
   targets: string[];
   analysis: Record<"separate" | "asr" | "diarize", string | null>;
@@ -76,6 +76,8 @@ export interface MixParams { duck_db: number; keep_nonspeech: boolean; nonspeech
 export interface FitLine {
   id: number; start: number; end: number; factor: number; status: "fits" | "borrowed" | "stretched" | "squeezed" | "overflow";
   slot_start: number; slot_end: number; dur: number; overlap_s: number; speaker: string | null; gain_db: number; tr: string; src: string; take_id: number;
+  /** title of the recurring part whose take this is, when reused from its origin */
+  linked?: string | null;
 }
 export interface MixState {
   params: MixParams; defaults: MixParams; has_mix: boolean; mix_mtime: number | null;
@@ -87,7 +89,9 @@ export interface Budget { syllables: number; est_s: number; slot_s: number; rati
 export interface Sentence {
   id: number; speaker: string | null; start: number; end: number; slot_s: number; text: string;
   /** translation into `lang` */
-  lang: string; tr: string; tr_locked: number; tr_provenance: "machine" | "human" | "reviewed" | null;
+  lang: string; tr: string; tr_locked: number; tr_provenance: "machine" | "human" | "reviewed" | "linked" | null;
+  /** inside a confirmed recurring part: translated and voiced once, at its origin */
+  linked: { clip_id: number; title: string; kind: ClipKind; source_id: string; source_name: string | null; line_id: number | null } | null;
   /** id of the chapter holding the line; `chapter_head` marks the first line of a later chapter */
   chapter: number; chapter_head: number; reviewed: number; budget: Budget | null;
   /** effective: the person's choice, else the interjection suggestion */

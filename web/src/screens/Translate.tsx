@@ -2,7 +2,7 @@ import { Languages, Lock, LockOpen, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { api, usePoll, type AppState, type Character, type Project, type Sentence } from "../api";
 import LangBar, { langName, useLang } from "../shell/LangBar";
-import { Button, Empty, ModeToggle, Panel, PlayButton, SpeakerDot, Tag } from "../ui";
+import { Button, Empty, LinkedTag, ModeToggle, Panel, PlayButton, SpeakerDot, Tag } from "../ui";
 
 /** Google tends to pick masculine second-person forms; any line saying "you" to
  *  someone is worth checking against the listener's gender. */
@@ -97,10 +97,17 @@ function Line({ s, c, project, lang, onPatch }: {
       </div>
       <div className={`flex flex-col gap-4 ${s.mode === "keep" ? "opacity-45" : ""}`}
         title={s.mode === "keep" ? "Kept in the original language: this translation is not voiced" : ""}>
-        <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={Math.max(1, Math.ceil(draft.length / 48))}
-          onBlur={() => draft.trim() !== s.tr && onPatch({ tr: draft.trim() })}
-          placeholder="—" lang={lang}
-          className="field h-auto py-4 font-eth text-14 leading-relaxed resize-none w-full" />
+        {s.linked ? (
+          <>
+            <div lang={lang} className="font-eth text-14 leading-relaxed text-dim px-6 py-4 border border-dashed border-border2 rounded-2">{s.tr || "—"}</div>
+            <span><LinkedTag linked={s.linked} /></span>
+          </>
+        ) : (
+          <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={Math.max(1, Math.ceil(draft.length / 48))}
+            onBlur={() => draft.trim() !== s.tr && onPatch({ tr: draft.trim() })}
+            placeholder="—" lang={lang}
+            className="field h-auto py-4 font-eth text-14 leading-relaxed resize-none w-full" />
+        )}
         {addressesSomeone(s.text) && s.tr && <span className="text-10 text-warn">Check the “you” form matches who is being spoken to.</span>}
       </div>
       <div className="flex flex-col gap-4 pt-3">
