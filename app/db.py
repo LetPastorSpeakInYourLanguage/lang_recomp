@@ -99,6 +99,12 @@ CREATE TABLE IF NOT EXISTS cast_bank (
   role TEXT DEFAULT 'bank', manual INTEGER DEFAULT 0, path TEXT, added REAL,
   PRIMARY KEY (character_uid, source_id, line_id)
 );
+-- A folder of videos on a device (app/libraries.py): scanned into works (series with
+-- library_id / library_path) without reading the videos.
+CREATE TABLE IF NOT EXISTS libraries (
+  id TEXT PRIMARY KEY, uid TEXT, name TEXT NOT NULL, root_id TEXT, path TEXT, src_lang TEXT DEFAULT 'en',
+  targets TEXT DEFAULT '["am"]', kind TEXT DEFAULT 'speaker', created REAL, scanned REAL
+);
 CREATE TABLE IF NOT EXISTS takes (
   project_id TEXT, sentence_id INTEGER, job_id TEXT, take INTEGER, path TEXT, text TEXT,
   sim REAL, cer REAL, dur REAL, dur_s REAL, asr TEXT, chosen INTEGER DEFAULT 0, created REAL,
@@ -182,8 +188,12 @@ def _migrate_works(c: sqlite3.Connection) -> None:
     for table in ("series", "projects", "clips", "collections"):
         if "uid" not in {r[1] for r in c.execute(f"PRAGMA table_info({table})")}:
             c.execute(f"ALTER TABLE {table} ADD COLUMN uid TEXT")
-    if "rights" not in {r[1] for r in c.execute("PRAGMA table_info(series)")}:
+    scols = {r[1] for r in c.execute("PRAGMA table_info(series)")}
+    if "rights" not in scols:
         c.execute("ALTER TABLE series ADD COLUMN rights TEXT DEFAULT ''")
+    for col in ("library_id", "library_path"):  # a work found in a library folder
+        if col not in scols:
+            c.execute(f"ALTER TABLE series ADD COLUMN {col} TEXT")
     for pid, name, src, tgt, meta, created in c.execute(
             "SELECT id, name, src_lang, tgt_lang, meta, created FROM projects WHERE series_id IS NULL").fetchall():
         extra = (json.loads(meta or "{}").get("targets") or [])

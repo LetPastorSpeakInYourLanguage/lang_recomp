@@ -121,3 +121,4 @@ def to_doc(cues: list[dict], language: str | None = None, max_gap: float = 0.8, 
 
 def load(text: str, language: str | None = None) -> dict:
     return to_doc(parse(text), language)
+
