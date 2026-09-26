@@ -141,3 +141,37 @@ def test_a_newer_package_version_is_refused(team_a, tmp_path):
         z.writestr("work.json", json.dumps({"format": package.FORMAT, "version": 99, "work": {"uid": "u"}}))
     with pytest.raises(ValueError):
         package.inspect(bad)
+
+
+def test_referenced_media_stay_on_the_device_and_resolve_in_another_library(team_a):
+    a = team_a
+    device = a["tmp"] / "device-as-colab-sees-it"  # e.g. /content/drive/MyDrive/LangBridge
+    pid = a["ids"][0]
+    lib = device / "library" / a["uid"] / "src0"
+    (lib / "takes").mkdir(parents=True)
+    (lib / "mix" / "am").mkdir(parents=True)
+    (lib / "export").mkdir(parents=True)
+    for f in ("video.mp4", "vocals.flac", "background.flac", "takes/1_t0.wav", "mix/am/mix.wav", "export/ep.am.mp4"):
+        (lib / f).write_bytes(b"x")
+    db.run("UPDATE projects SET video=?, audio=? WHERE id=?", str(lib / "video.mp4"), str(lib / "video.mp4"), pid)
+    db.set_meta(pid, media_dir=str(lib), exports={"am": {"mp4": str(lib / "export/ep.am.mp4"), "at": 1}})
+    db.run("UPDATE takes SET path=? WHERE project_id=?", str(lib / "takes/1_t0.wav"), pid)
+    uid0 = project.get(pid)["uid"]
+    pkg = package.export(a["sid"], ["am"], media="ref", out=a["tmp"] / "run" / "work.lbwork", ref_root=device)
+    with zipfile.ZipFile(pkg) as z:
+        assert not any("/media/" in n for n in z.namelist())  # nothing copied into the package
+    _use(a["mp"], a["tmp"] / "b")
+    seen_here = a["tmp"] / "the-same-folder-on-G"  # the same Drive folder, as the PC sees it
+    import shutil
+    shutil.copytree(device, seen_here)
+    rep = package.import_work(pkg, fetch=False, ref_root=seen_here)
+    here = db.row("SELECT id FROM projects WHERE uid=?", uid0)["id"]
+    p = project.get(here)
+    assert p["video"] == str(seen_here / "library" / a["uid"] / "src0" / "video.mp4")
+    assert project.stem(here, "vocals") == seen_here / "library" / a["uid"] / "src0" / "vocals.flac"
+    from app import mix
+    assert mix.mix_dir(here, "am") == seen_here / "library" / a["uid"] / "src0" / "mix" / "am"
+    assert db.row("SELECT path FROM takes WHERE project_id=?", here)["path"].startswith(str(seen_here))
+    assert db.meta(here)["exports"]["am"]["mp4"] == str(seen_here / "library" / a["uid"] / "src0" / "export" / "ep.am.mp4")
+    assert not (project.pdir(here) / "vocals.flac").exists()
+

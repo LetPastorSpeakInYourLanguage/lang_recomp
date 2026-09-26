@@ -1,7 +1,7 @@
-import { Library, PackageOpen, Plus } from "lucide-react";
+import { HardDrive, Library, PackageOpen, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
-import { api, fmtTime, type ImportReport, type PackageInfo, type Project, type Series, type SeriesKind } from "../api";
-import { go, goSeries } from "../router";
+import { api, fmtTime, type AppState, type ImportReport, type LibraryInfo, type PackageInfo, type Project, type Series, type SeriesKind } from "../api";
+import { go, goLibrary, goSeries } from "../router";
 import VideoForm, { LangOptions } from "../shell/VideoForm";
 import { Button, Panel, Tag, stateTone } from "../ui";
 
@@ -17,7 +17,9 @@ const KIND_HINT: Record<SeriesKind, string> = {
 
 const codes = (v: string) => v.split(/[\s,]+/).map((x) => x.trim().toLowerCase()).filter(Boolean);
 
-export default function Home({ projects, series, reload }: { projects: Project[]; series: Series[]; reload: () => void }) {
+export default function Home({ projects, series, libraries, state, reload }: {
+  projects: Project[]; series: Series[]; libraries: LibraryInfo[]; state: AppState | null; reload: () => void;
+}) {
   const [adding, setAdding] = useState(false);
   const [src, setSrc] = useState("en");
   const [tgt, setTgt] = useState("am");
@@ -60,6 +62,8 @@ export default function Home({ projects, series, reload }: { projects: Project[]
           </span>} />
       </Panel>
 
+      <Libraries libraries={libraries} state={state} onDone={reload} />
+
       <OpenShared onDone={reload} />
 
       <Panel title={`Standalone videos · ${standalone.length}`}>
@@ -97,6 +101,74 @@ export default function Home({ projects, series, reload }: { projects: Project[]
         )}
       </Panel>
     </div>
+  );
+}
+
+/** Folders of videos on a device (Drive for Colab, a disk for this PC), explored per library. */
+function Libraries({ libraries, state, onDone }: { libraries: LibraryInfo[]; state: AppState | null; onDone: () => void }) {
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState("");
+  const [root, setRoot] = useState("");
+  const [path, setPath] = useState("");
+  const [src, setSrc] = useState("en");
+  const [targets, setTargets] = useState("am");
+  const [kind, setKind] = useState("other");
+  const [err, setErr] = useState<string | null>(null);
+  const roots = state?.roots ?? [];
+  const where = root || roots[0]?.id || "";
+  async function add() {
+    setErr(null);
+    try {
+      const L = await api.createLibrary({ name: name.trim() || path.split(/[\\/]/).filter(Boolean).pop() || "Library", root: where, path: path.trim(),
+        src_lang: src.trim().toLowerCase(), targets: codes(targets), kind });
+      await api.scanLibrary(L.id);
+      setAdding(false); onDone(); goLibrary(L.id);
+    } catch (e) { setErr((e as Error).message); }
+  }
+  return (
+    <Panel title={`Libraries · ${libraries.length}`} actions={!adding && <Button onClick={() => setAdding(true)}><Plus size={12} />Add a library folder</Button>}>
+      {adding && (
+        <form className="p-14 grid gap-10 border-b border-border bg-panel2" onSubmit={(e) => { e.preventDefault(); if (path.trim()) void add(); }}>
+          <div className="text-11 text-dim">A folder teams push videos into (layout in docs/LIBRARY_FOLDERS.md). It is processed by the device that can read it:
+            a folder in your Google Drive by Colab, a folder on this PC or an external disk by this PC's worker. Nothing is copied; scanning reads names only.</div>
+          <div className="grid grid-cols-[2fr_1fr] gap-10 max-md:grid-cols-1">
+            <label className="grid gap-4"><span className="label">Folder</span>
+              <input className="field" autoFocus value={path} onChange={(e) => setPath(e.target.value)} placeholder="G:\My Drive\Libraries\Teachings   or   E:\Preachings\PastorJohnVideos" /></label>
+            <label className="grid gap-4"><span className="label">Runs on</span>
+              <select className="field" value={where} onChange={(e) => setRoot(e.target.value)}>
+                {roots.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+              </select></label>
+          </div>
+          <div className="grid grid-cols-[2fr_1fr_1fr_1fr] gap-10 max-md:grid-cols-2">
+            <label className="grid gap-4"><span className="label">Name</span><input className="field" value={name} onChange={(e) => setName(e.target.value)} placeholder="the folder's name" /></label>
+            <label className="grid gap-4"><span className="label">Spoken</span><input list="lb-langs-all" className="field font-mono" value={src} onChange={(e) => setSrc(e.target.value)} /></label>
+            <label className="grid gap-4"><span className="label">Dub into</span><input list="lb-langs-all" className="field font-mono" value={targets} onChange={(e) => setTargets(e.target.value)} /></label>
+            <label className="grid gap-4"><span className="label">Mostly</span>
+              <select className="field" value={kind} onChange={(e) => setKind(e.target.value)}>
+                {[["speaker", "talks & teachings"], ["show", "shows"], ["channel", "podcasts"], ["course", "courses"], ["news", "news"], ["other", "mixed"]].map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+              </select></label>
+          </div>
+          <div className="flex items-center gap-8">
+            <span className="flex-1" />{err && <span className="text-11 text-bad">{err}</span>}
+            <Button variant="ghost" onClick={() => setAdding(false)}>Cancel</Button>
+            <Button type="submit" variant="primary" disabled={!path.trim()}>Add and scan</Button>
+          </div>
+        </form>
+      )}
+      {!libraries.length && !adding && <div className="p-14 text-11.5 text-faint">A library is a folder of videos a team keeps adding to — series, standalone talks, podcasts — on Drive or a disk.</div>}
+      {libraries.length > 0 && (
+        <div className="p-12 grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-10">
+          {libraries.map((L) => (
+            <button key={L.id} onClick={() => goLibrary(L.id)} className="text-left bg-panel2 hover:bg-panel3 border border-border rounded-3 p-10 flex flex-col gap-5">
+              <div className="flex items-center gap-6"><HardDrive size={13} className="text-accent" /><span className="text-12.5 font-semibold flex-1 truncate">{L.name}</span>
+                <Tag>{roots.find((r) => r.id === L.root_id)?.kind === "colab" ? "Drive" : "this PC"}</Tag></div>
+              <div className="text-10 font-mono text-dim truncate">{L.path}</div>
+              <div className="text-10.5 text-dim">{L.counts?.works ?? 0} works · {L.counts?.videos ?? 0} videos</div>
+            </button>
+          ))}
+        </div>
+      )}
+    </Panel>
   );
 }
 

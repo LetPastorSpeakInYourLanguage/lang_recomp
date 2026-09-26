@@ -27,44 +27,47 @@ def _write(path: Path, data) -> None:
 def separate(ctx) -> dict:
     """Vocals / background split. Default model: audio-separator's default
     (a Mel-Band/BS RoFormer vocal model); override with params.model."""
+    # (audio-separator imports audioread, which current librosa no longer pulls in: see load_separator)
+    src = ctx.input(ctx.job["inputs"][0])
+    model_name = ctx.params.get("model")
+    sep = ctx.model(f"separator:{model_name}", lambda: load_separator(model_name, int(ctx.params.get("overlap", 2)), ctx.log))
+    separate_file(sep, src, ctx.work / "sep", ctx.out, ctx.log)
+    return {"model": sep.model_friendly_name if hasattr(sep, "model_friendly_name") else model_name,
+            "files": ["vocals.flac", "background.flac"]}
+
+
+def load_separator(model_name: str | None = None, overlap: int = 2, log=print):
     ensure("audio-separator[gpu]" if device() == "cuda" else "audio-separator[cpu]", probe="audio_separator")
-    # audio-separator imports audioread, which current librosa no longer pulls in.
     ensure("audioread", probe="audioread")
     from audio_separator.separator import Separator
 
-    patch_separator_download(ctx.log)
-    enable_xpu_for_separator(ctx.log)
-    src = ctx.input(ctx.job["inputs"][0])
-    model_name = ctx.params.get("model")
-    tmp = ctx.work / "sep"
-    tmp.mkdir(exist_ok=True)
+    patch_separator_download(log)
+    enable_xpu_for_separator(log)
+    # overlap 2 (library default 8): a quarter of the windows; on the test clip its
+    # vocals matched overlap 8 to 65 dB, far below audibility.
+    s = Separator(output_format="FLAC", model_file_dir=str(cache_dir("audio-separator")),
+                  mdxc_params={"segment_size": 256, "override_model_segment_size": False,
+                               "batch_size": 1, "overlap": overlap, "pitch_shift": 0})
+    s.load_model(model_name) if model_name else s.load_model()
+    return s
 
-    def load():
-        # overlap 2 (library default 8): a quarter of the windows; on the test clip its
-        # vocals matched overlap 8 to 65 dB, far below audibility.
-        s = Separator(output_dir=str(tmp), output_format="FLAC",
-                      model_file_dir=str(cache_dir("audio-separator")),
-                      mdxc_params={"segment_size": 256, "override_model_segment_size": False,
-                                   "batch_size": 1, "overlap": int(ctx.params.get("overlap", 2)),
-                                   "pitch_shift": 0})
-        s.load_model(model_name) if model_name else s.load_model()
-        return s
 
-    sep = ctx.model(f"separator:{model_name}", load)
-    # The loaded model is reused across jobs, but its output folder was fixed when it was
-    # loaded (the first job's): point it at this job's folder, or later jobs' stems land
-    # in a folder that no longer exists.
+def separate_file(sep, src: Path, tmp: Path, dest: Path, log=print) -> tuple[Path, Path]:
+    """Split one file with a loaded separator into dest/vocals.flac and dest/background.flac."""
+    tmp.mkdir(parents=True, exist_ok=True)
+    dest.mkdir(parents=True, exist_ok=True)
+    # The loaded model is reused across files, but its output folder is fixed when it is
+    # loaded: point it at this file's folder, or the stems land somewhere else.
     sep.output_dir = str(tmp)
     if getattr(sep, "model_instance", None) is not None:
         sep.model_instance.output_dir = str(tmp)
     files = [Path(tmp / f) if not os.path.isabs(f) else Path(f) for f in sep.separate(str(src))]
-    ctx.log(f"separator outputs: {[f.name for f in files]}")
+    log(f"separator outputs: {[f.name for f in files]}")
     vocals = next(f for f in files if "(vocals)" in f.name.lower())
     other = next(f for f in files if f is not vocals)
-    shutil.move(str(vocals), ctx.out / "vocals.flac")
-    shutil.move(str(other), ctx.out / "background.flac")
-    return {"model": sep.model_friendly_name if hasattr(sep, "model_friendly_name") else model_name,
-            "files": ["vocals.flac", "background.flac"]}
+    shutil.move(str(vocals), dest / "vocals.flac")
+    shutil.move(str(other), dest / "background.flac")
+    return dest / "vocals.flac", dest / "background.flac"
 
 
 def patch_separator_download(log=print) -> None:

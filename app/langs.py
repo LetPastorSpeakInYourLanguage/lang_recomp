@@ -28,7 +28,32 @@ KNOWN: dict[str, tuple[str, str, str]] = {
     "ja": ("Japanese", "jpn", "cjk"), "ko": ("Korean", "kor", "hangul"),
     "id": ("Indonesian", "ind", "latin"), "vi": ("Vietnamese", "vie", "latin"),
     "tl": ("Tagalog", "tgl", "latin"), "he": ("Hebrew", "heb", "hebrew"),
+    "nso": ("Sepedi", "nso", "latin"), "ro": ("Romanian", "ron", "latin"),
+    "pcm": ("Nigerian Pidgin", "pcm", "latin"), "ne": ("Nepali", "nep", "devanagari"),
+    "ve": ("Tshivenda", "ven", "latin"), "sn": ("Shona", "sna", "latin"),
+    "tn": ("Setswana", "tsn", "latin"), "st": ("Sesotho", "sot", "latin"),
+    "ts": ("Xitsonga", "tso", "latin"), "ny": ("Chichewa", "nya", "latin"),
+    "pl": ("Polish", "pol", "latin"), "ta": ("Tamil", "tam", "tamil"), "te": ("Telugu", "tel", "telugu"),
+    "ml": ("Malayalam", "mal", "malayalam"), "kn": ("Kannada", "kan", "kannada"),
 }
+
+# Names people give folders and files ("Italiano", "Español", "Mandarin", "Pidgin"…) → code.
+_ALIASES = {"italiano": "it", "español": "es", "espanol": "es", "français": "fr", "francais": "fr",
+            "deutsch": "de", "português": "pt", "portugues": "pt", "mandarin": "zh", "chinese": "zh",
+            "pidgin": "pcm", "nigerian pidgin": "pcm", "venda": "ve", "tshivenda": "ve", "northern sotho": "nso",
+            "setswana": "tn", "tswana": "tn", "sesotho": "st", "isizulu": "zu", "isixhosa": "xh", "kiswahili": "sw",
+            "amharic": "am", "afaan oromoo": "om", "oromo": "om", "tigrinya": "ti", "farsi": "fa"}
+
+
+def from_name(text: str) -> str | None:
+    """A language code for a name as people write it (English or native), or None."""
+    t = text.strip().lower()
+    if t in _ALIASES:
+        return _ALIASES[t]
+    for code, (nm, _, _) in KNOWN.items():
+        if t == nm.lower():
+            return code
+    return None
 
 
 def name(code: str) -> str:

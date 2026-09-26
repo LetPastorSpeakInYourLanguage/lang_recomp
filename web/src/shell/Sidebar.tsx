@@ -1,11 +1,12 @@
-import { Activity, AudioLines, Bookmark, Clapperboard, FileText, FolderPlus, Languages, Library, Users } from "lucide-react";
+import { Activity, AudioLines, Bookmark, Clapperboard, FileText, FolderPlus, HardDrive, Languages, Library, Users } from "lucide-react";
 import type { ReactNode } from "react";
-import { fmtTime, type Project, type Series } from "../api";
-import { go, goClips, goSeries, type Screen } from "../router";
+import { fmtTime, type LibraryInfo, type Project, type Series } from "../api";
+import { go, goClips, goLibrary, goSeries, type Screen } from "../router";
 import { Tag } from "../ui";
 
-export default function Sidebar({ projects, series, project, screen, openSeries, clipsOpen }: {
-  projects: Project[]; series: Series[]; project: Project | null; screen: Screen; openSeries: string | null; clipsOpen: boolean;
+export default function Sidebar({ projects, series, libraries, project, screen, openSeries, openLibrary, clipsOpen }: {
+  projects: Project[]; series: Series[]; libraries: LibraryInfo[]; project: Project | null; screen: Screen; openSeries: string | null;
+  openLibrary: string | null; clipsOpen: boolean;
 }) {
   const c = project?.counts;
   const items: { screen: Screen; label: string; icon: ReactNode; count?: string; locked?: boolean }[] = [
@@ -28,6 +29,13 @@ export default function Sidebar({ projects, series, project, screen, openSeries,
         className={`w-full text-left border-0 border-l-2 pl-10 pr-12 py-4 flex items-center gap-6 text-11.5 ${clipsOpen ? "bg-sel font-semibold text-text" : "bg-transparent text-dim hover:bg-panel3"}`}>
         <Bookmark size={11} className="text-accent" />Clips & collections
       </button>
+      {libraries.map((L) => (
+        <button key={L.id} onClick={() => goLibrary(L.id)} style={{ borderLeftColor: openLibrary === L.id ? "var(--accent)" : "transparent" }}
+          className={`w-full text-left border-0 border-l-2 pl-10 pr-12 py-4 flex items-center gap-6 text-11.5 ${openLibrary === L.id ? "bg-sel font-semibold text-text" : "bg-transparent text-dim hover:bg-panel3"}`}>
+          <HardDrive size={11} className="text-accent" /><span className="flex-1 truncate">{L.name}</span>
+          <span className="text-9.5 font-mono text-faint">{L.counts?.videos ?? ""}</span>
+        </button>
+      ))}
       <div className="overflow-y-auto max-h-[38%] pb-6">
         {series.map((s) => {
           const mine = projects.filter((p) => p.series_id === s.id).sort((a, b) => (a.position ?? 0) - (b.position ?? 0));

@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import aligners, banks, bulk, cast, chapters, db, feeds, langs, library, mix, package, project, recurring, series, settings, tasks, voice
+from . import aligners, banks, bulk, cast, chapters, db, feeds, langs, libraries, library, mix, package, project, recurring, runs, series, settings, tasks, voice
 
 app = FastAPI(title="Lang-Bridge")
 WEB = Path(__file__).resolve().parents[1] / "web" / "dist"
@@ -109,7 +109,9 @@ class NewProject(BaseModel):
 
 @app.get("/api/projects")
 def list_projects():
-    return [project.summary(p["id"]) for p in db.rows("SELECT id FROM projects ORDER BY created DESC")]
+    """Brief rows for lists (library videos are explored per library); the open project's
+    full summary is GET /api/projects/{pid}."""
+    return project.briefs()
 
 
 @app.post("/api/projects")
@@ -1149,6 +1151,95 @@ def import_package(body: PackagePath):
         return package.import_work(_package_path(body.path), fetch=body.fetch)
     except (ValueError, KeyError, zipfile.BadZipFile) as e:
         raise HTTPException(400, f"could not import: {e}")
+
+
+# ---- library folders (app/libraries.py) ------------------------------------------------------
+class NewLibrary(BaseModel):
+    name: str
+    root: str               # the device that runs it: a job folder id ("colab", "local", …)
+    path: str               # the folder as this PC sees it (G:\My Drive\…, E:\…)
+    src_lang: str = "en"
+    targets: list[str] = ["am"]
+    kind: str = "other"
+
+
+def _lib(lid: str) -> dict:
+    try:
+        return libraries.get(lid)
+    except KeyError:
+        raise HTTPException(404, "no such library")
+
+
+@app.get("/api/libraries")
+def list_libraries():
+    return libraries.listing()
+
+
+@app.post("/api/libraries")
+def new_library(body: NewLibrary):
+    try:
+        return libraries.create(body.name, body.root, body.path, body.src_lang, body.targets, body.kind)
+    except (ValueError, KeyError) as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/libraries/{lid}/scan")
+def scan_library(lid: str):
+    """Catalogue new videos (names only; nothing is read or copied)."""
+    _lib(lid)
+    try:
+        return libraries.scan(lid)
+    except OSError as e:
+        raise HTTPException(409, f"the folder is not reachable: {e}")
+
+
+@app.get("/api/libraries/{lid}")
+def library_tree(lid: str):
+    return _lib(lid) | {"works": libraries.tree(lid)}
+
+
+class Only(BaseModel):
+    only: list[str] | None = None
+
+
+@app.post("/api/libraries/{lid}/load_subtitles")
+def library_subtitles(lid: str, body: Only):
+    _lib(lid)
+    return libraries.load_subtitles(lid, body.only)
+
+
+# ---- runs (app/runs.py) ------------------------------------------------------------------------
+class RunReq(BaseModel):
+    videos: list[str]                   # project ids, from one work or many
+    root: str                           # the device: a job folder id
+    stages: list[str] | None = None     # which stages, in pipeline order (None = all)
+    options: dict = {}
+    name: str = "run"
+    owner: str | None = None            # "series:<id>" or "library:<id>" (where it is listed)
+
+
+@app.post("/api/runs")
+def new_run(body: RunReq):
+    if not body.videos:
+        raise HTTPException(400, "choose at least one video")
+    try:
+        return runs.create_for(body.videos, body.root, body.stages, body.options, body.name, body.owner)
+    except (ValueError, KeyError, OSError) as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/runs")
+def list_runs(owner: str):
+    return runs.listing(owner)
+
+
+@app.post("/api/runs/{root}/{run_id}/open")
+def open_run(root: str, run_id: str):
+    """Bring a run's results in (media stay on the device)."""
+    try:
+        return runs.open_results(root, run_id)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
 
 
 # ---- static UI ---------------------------------------------------------------------------

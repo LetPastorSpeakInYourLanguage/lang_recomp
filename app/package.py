@@ -9,6 +9,7 @@ adds and fills in without overwriting what people decided.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import tempfile
 import time
@@ -18,19 +19,44 @@ from pathlib import Path
 from . import db, project, series, settings
 
 FORMAT, VERSION = "lang-bridge.work", 1
-MEDIA = ("none", "opus", "flac")
+MEDIA = ("none", "opus", "flac", "ref")  # ref: media stay where they are, referenced under a device root
 STEMS = ("audio", "vocals", "background")
 
 
 # ---- export --------------------------------------------------------------------------------
-def export(sid: str, langs: list[str] | None = None, media: str = "opus", takes: bool = False, note: str = "") -> Path:
-    """Write the work (and the chosen languages) to data/exports/<work>-<time>.lbwork."""
+def _library_of(sid: str) -> dict | None:
+    """The library a work was found in (its identity travels, so the same teacher is
+    recognised across the library's works wherever they are processed)."""
+    lid = (db.row("SELECT library_id FROM series WHERE id=?", sid) or {}).get("library_id")
+    if not lid:
+        return None
+    lib = db.row("SELECT uid, name FROM libraries WHERE id=?", lid)
+    return {"uid": lib["uid"], "name": lib["name"]} if lib else {"uid": lid, "name": None}
+
+
+def _rel(path, root: Path | None) -> str | None:
+    """A path as seen from a device root (posix; "../" for a folder beside it on the same
+    drive, e.g. a folder of videos elsewhere in My Drive), or None if it is elsewhere."""
+    if not path or root is None:
+        return None
+    try:
+        return Path(os.path.relpath(Path(path).resolve(), Path(root).resolve())).as_posix()
+    except (ValueError, OSError):  # another drive
+        return None
+
+
+def export(sid: str, langs: list[str] | None = None, media: str = "opus", takes: bool = False, note: str = "",
+           out: Path | None = None, ref_root: Path | None = None) -> Path:
+    """Write the work (and the chosen languages) to data/exports/<work>-<time>.lbwork (or
+    ``out``). ``media="ref"`` copies no media: files under ``ref_root`` (a device's job
+    folder, e.g. the Drive LangBridge folder) are referenced by their path there, and
+    every take of the chosen languages travels as a reference too."""
     if media not in MEDIA:
         raise ValueError(f"media must be one of {', '.join(MEDIA)}")
     w = series.get(sid)
     langs = list(w["targets"] if langs is None else langs)
     srcs = db.rows("SELECT * FROM projects WHERE series_id=? ORDER BY position, created", sid)
-    out = db.DATA / "exports" / f"{sid}-{time.strftime('%Y%m%d-%H%M%S')}.lbwork"
+    out = out or db.DATA / "exports" / f"{sid}-{time.strftime('%Y%m%d-%H%M%S')}.lbwork"
     out.parent.mkdir(parents=True, exist_ok=True)
     uid_of = {p["id"]: p["uid"] for p in srcs}
     with tempfile.TemporaryDirectory() as tmp, zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
@@ -39,13 +65,26 @@ def export(sid: str, langs: list[str] | None = None, media: str = "opus", takes:
 
         put("work.json", {"format": FORMAT, "version": VERSION, "exported_at": time.time(), "note": note,
                           "media": media, "languages": langs,
-                          "work": {k: w[k] for k in ("uid", "name", "kind", "src_lang", "targets", "feed_url", "rights", "settings")}})
+                          "work": {k: w[k] for k in ("uid", "name", "kind", "src_lang", "targets", "feed_url", "rights", "settings")}
+                          | {"library": _library_of(sid)}})
         for p in srcs:
             base, d = f"sources/{p['uid']}/", project.pdir(p["id"])
             meta = json.loads(p["meta"] or "{}")
+            refs = None
+            if media == "ref":
+                have = lambda f: _rel(f, ref_root) if f and Path(f).exists() else None  # noqa: E731 - only real files
+                refs = {"dir": _rel(meta.get("media_dir"), ref_root), "video": have(p["video"]),
+                        "audio": have(p["audio"]),
+                        "stems": {n: have(project.stem(p["id"], n)) for n in ("vocals", "background")},
+                        "exports": {lang: {k: have(v) if k == "mp4" else v for k, v in e.items()}
+                                    for lang, e in (meta.get("exports") or {}).items()},
+                        "subtitles": have(meta.get("subtitles"))}
             put(base + "source.json", {**{k: p[k] for k in ("uid", "name", "source", "origin_id", "published", "position",
                                                             "clip_start", "clip_end", "duration", "src_lang", "max_speakers")},
-                                       "mix": meta.get("mix"), "chapter_seq": meta.get("chapter_seq")})
+                                       "mix": meta.get("mix"), "chapter_seq": meta.get("chapter_seq"), "refs": refs,
+                                       "transcript": meta.get("transcript"),
+                                       # how the device finds this source's files (library videos, subtitles)
+                                       "device_refs": meta.get("refs"), "library": meta.get("library")})
             lines = db.rows("SELECT id, start, end, speaker, text, words, reviewed, mode FROM sentences WHERE project_id=?"
                             " ORDER BY start", p["id"])
             for ln in lines:
@@ -57,7 +96,7 @@ def export(sid: str, langs: list[str] | None = None, media: str = "opus", takes:
                 "centroids": (json.loads(dia.read_text(encoding="utf-8")).get("centroids") or {}) if dia.exists() else {},
                 "appearances": db.rows("SELECT label, character_uid, status, score, talk_s FROM appearances WHERE source_id=?",
                                        p["id"])})
-            if media != "none":
+            if media in ("opus", "flac"):
                 for name, f in (("audio", Path(p["audio"] or d / "clip.flac")), ("vocals", d / "vocals.flac"),
                                 ("background", d / "background.flac")):
                     if f.exists():
@@ -67,7 +106,9 @@ def export(sid: str, langs: list[str] | None = None, media: str = "opus", takes:
                         z.write(enc, base + f"media/{name}{enc.suffix}")
 
         people = []
-        for c in db.rows("SELECT * FROM cast WHERE series_id=? ORDER BY created", sid):
+        # the work's own characters, and people of its library who appear in it
+        for c in db.rows("SELECT * FROM cast WHERE series_id=? OR uid IN (SELECT a.character_uid FROM appearances a"
+                         " JOIN projects p ON p.id=a.source_id WHERE p.series_id=?) ORDER BY created", sid, sid):
             bank = []
             for r in db.rows("SELECT * FROM cast_bank WHERE character_uid=?", c["uid"]):
                 if r["source_id"] not in uid_of or not r["path"] or not Path(r["path"]).exists():
@@ -110,7 +151,13 @@ def export(sid: str, langs: list[str] | None = None, media: str = "opus", takes:
             put(f"languages/{lang}/profile.json", {
                 "aligner": settings.aligner(lang),
                 "rates": {p["uid"]: (json.loads(p["meta"] or "{}").get("rates") or {}).get(lang) for p in srcs}})
-            if takes:
+            if media == "ref":  # every take, where it is (the receiving side picks or keeps the choice)
+                put(f"languages/{lang}/takes_ref.json", [
+                    {"source_uid": p["uid"], "line_id": t["sentence_id"], "ref": _rel(t["path"], ref_root),
+                     **{k: t[k] for k in ("job_id", "take", "text", "sim", "cer", "dur", "dur_s", "asr", "chosen")}}
+                    for p in srcs for t in db.rows("SELECT * FROM takes WHERE project_id=? AND lang=?", p["id"], lang)
+                    if _rel(t["path"], ref_root)])
+            elif takes:
                 chosen = []
                 for p in srcs:
                     for t in db.rows("SELECT * FROM takes WHERE project_id=? AND lang=? AND chosen=1", p["id"], lang):
@@ -142,10 +189,12 @@ def _manifest(z: zipfile.ZipFile) -> dict:
     return w
 
 
-def import_work(path: str | Path, fetch: bool = True) -> dict:
+def import_work(path: str | Path, fetch: bool = True, ref_root: Path | None = None) -> dict:
     """Bring a package into this library. A new work is created; a work already here
     (same uid) gains what it lacks, and nothing people decided here is overwritten.
-    Returns a report of what landed and what was kept or needs attention."""
+    ``ref_root`` resolves referenced media (packages made with media "ref"): this
+    machine's path of the device folder they were referenced under. Returns a report
+    of what landed and what was kept or needs attention."""
     rep: dict = {"sources": {"added": [], "matched": []}, "lines": 0, "characters": {"added": 0, "matched": 0},
                  "clips": {"added": 0, "matched": 0}, "translations": {}, "fetching": [], "notes": []}
     with zipfile.ZipFile(path) as z, tempfile.TemporaryDirectory() as tmp:
@@ -163,6 +212,9 @@ def import_work(path: str | Path, fetch: bool = True) -> dict:
                    json.dumps(w["targets"]), json.dumps(w.get("settings") or {}), time.time(), w["uid"], w.get("rights") or "")
             rep["created"] = True
         rep["work"] = sid
+        if w.get("library") and not db.row("SELECT library_id FROM series WHERE id=?", sid)["library_id"]:
+            here_lib = db.row("SELECT id FROM libraries WHERE uid=?", w["library"]["uid"])
+            db.run("UPDATE series SET library_id=? WHERE id=?", here_lib["id"] if here_lib else w["library"]["uid"], sid)
         targets = list(series.get(sid)["targets"])
         for lang in wj.get("languages", []):  # the languages that arrive become the work's too
             if lang not in targets:
@@ -201,18 +253,27 @@ def import_work(path: str | Path, fetch: bool = True) -> dict:
             if local:
                 pid = local["id"]
                 rep["sources"]["matched"].append(pid)
-                rep["lines"] += _merge_lines(pid, json.loads(z.read(base + "lines.json")), rep)
+                lines = json.loads(z.read(base + "lines.json"))
+                if lines and not db.row("SELECT 1 FROM sentences WHERE project_id=?", pid):
+                    _insert_lines(pid, lines, json.loads(z.read(base + "chapters.json")))  # none here yet: take them all
+                    rep["lines"] += len(lines)
+                else:
+                    rep["lines"] += _merge_lines(pid, lines, rep)
             else:
                 pid = _new_source(sid, sj, targets)
                 rep["sources"]["added"].append(pid)
                 lines = json.loads(z.read(base + "lines.json"))
-                db.many("INSERT INTO sentences (project_id,id,speaker,start,end,text,words,reviewed,mode) VALUES (?,?,?,?,?,?,?,?,?)",
-                        [(pid, ln["id"], ln["speaker"], ln["start"], ln["end"], ln["text"], json.dumps(ln.get("words") or []),
-                          ln.get("reviewed", 0), ln.get("mode")) for ln in lines])
+                _insert_lines(pid, lines, json.loads(z.read(base + "chapters.json")))
                 rep["lines"] += len(lines)
-                db.many("INSERT INTO chapters (project_id,id,start,title,updated) VALUES (?,?,?,?,?)",
-                        [(pid, c["id"], c["start"], c.get("title") or "", time.time()) for c in json.loads(z.read(base + "chapters.json"))])
             pid_of[sj["uid"]] = pid
+            if sj.get("refs") and ref_root is not None:
+                _place_refs(pid, sj["refs"], ref_root)
+            if sj.get("transcript"):
+                db.set_meta(pid, transcript=sj["transcript"])
+            if sj.get("device_refs") and not db.meta(pid).get("refs"):
+                db.set_meta(pid, refs=sj["device_refs"])
+            if sj.get("library") and not db.meta(pid).get("library"):
+                db.set_meta(pid, library=sj["library"])
             spk = json.loads(z.read(base + "speakers.json"))
             dia = project.pdir(pid) / "diarization.json"
             if spk.get("centroids") and not dia.exists():  # voices keep matching in this library
@@ -244,8 +305,38 @@ def import_work(path: str | Path, fetch: bool = True) -> dict:
             rep["fetching"] = need_fetch
         _import_library(json.loads(z.read("library.json")), sid, pid_of, rep)
         for lang in wj.get("languages", []):
-            _import_language(z, lang, pid_of, rep)
+            _import_language(z, lang, pid_of, rep, ref_root)
     return rep
+
+
+def _insert_lines(pid: str, lines: list[dict], chapters: list[dict]) -> None:
+    db.many("INSERT OR REPLACE INTO sentences (project_id,id,speaker,start,end,text,words,reviewed,mode) VALUES (?,?,?,?,?,?,?,?,?)",
+            [(pid, ln["id"], ln["speaker"], ln["start"], ln["end"], ln["text"], json.dumps(ln.get("words") or []),
+              ln.get("reviewed", 0), ln.get("mode")) for ln in lines])
+    db.run("DELETE FROM chapters WHERE project_id=?", pid)
+    db.many("INSERT INTO chapters (project_id,id,start,title,updated) VALUES (?,?,?,?,?)",
+            [(pid, c["id"], c["start"], c.get("title") or "", time.time()) for c in chapters])
+
+
+def _place_refs(pid: str, refs: dict, root: Path) -> None:
+    """Media a device left in its folder: point this source at them (nothing copied)."""
+    at = lambda rel: os.path.normpath(Path(root) / rel) if rel else None  # noqa: E731
+    if refs.get("video") or refs.get("audio"):
+        db.run("UPDATE projects SET video=COALESCE(?, video), audio=COALESCE(?, audio) WHERE id=?",
+               at(refs.get("video")), at(refs.get("audio")), pid)
+    meta = {}
+    if refs.get("dir"):
+        meta["media_dir"] = at(refs["dir"])
+    stems = {n: at(r) for n, r in (refs.get("stems") or {}).items() if r}
+    if stems:
+        meta["stems"] = stems
+    ex = {lang: {**e, "mp4": at(e.get("mp4"))} for lang, e in (refs.get("exports") or {}).items() if e.get("mp4")}
+    if ex:
+        meta["exports"] = (db.meta(pid).get("exports") or {}) | ex
+    if refs.get("subtitles"):
+        meta["subtitles"] = at(refs["subtitles"])
+    if meta:
+        db.set_meta(pid, **meta)
 
 
 def _new_source(sid: str, sj: dict, targets: list[str]) -> str:
@@ -351,7 +442,7 @@ def _import_library(lib: dict, sid: str, pid_of: dict[str, str], rep: dict) -> N
                        colid, "clip", ids[u], time.time())
 
 
-def _import_language(z: zipfile.ZipFile, lang: str, pid_of: dict[str, str], rep: dict) -> None:
+def _import_language(z: zipfile.ZipFile, lang: str, pid_of: dict[str, str], rep: dict, ref_root: Path | None = None) -> None:
     r = rep["translations"].setdefault(lang, {"written": 0, "kept_here": 0, "conflicts": 0})
     tr = json.loads(z.read(f"languages/{lang}/translations.json"))
     for suid, rows in tr.items():
@@ -382,6 +473,20 @@ def _import_language(z: zipfile.ZipFile, lang: str, pid_of: dict[str, str], rep:
             db.set_meta(pid, rates=(db.meta(pid).get("rates") or {}) | {lang: rate})
     if prof.get("aligner") and not settings.aligner(lang):
         rep["notes"].append(f"the sender aligns {lang} with {prof['aligner']}; add it in Settings to use it here")
+    ref = f"languages/{lang}/takes_ref.json"
+    if ref in z.namelist() and ref_root is not None:
+        for t in json.loads(z.read(ref)):
+            pid = pid_of.get(t["source_uid"])
+            if not pid or db.row("SELECT 1 FROM takes WHERE project_id=? AND sentence_id=? AND job_id=? AND take=?",
+                                 pid, t["line_id"], t["job_id"], t["take"]):
+                continue
+            if t["chosen"]:  # a choice made there stands unless one was made here
+                if db.row("SELECT 1 FROM takes WHERE project_id=? AND sentence_id=? AND lang=? AND chosen=1", pid, t["line_id"], lang):
+                    t["chosen"] = 0
+            db.run("INSERT INTO takes (project_id,sentence_id,job_id,take,path,text,sim,cer,dur,dur_s,asr,chosen,created,lang)"
+                   " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", pid, t["line_id"], t["job_id"], t["take"],
+                   os.path.normpath(Path(ref_root) / t["ref"]), t["text"], t.get("sim"), t.get("cer"), t.get("dur"), t.get("dur_s"),
+                   t.get("asr"), t["chosen"], time.time(), lang)
     name = f"languages/{lang}/takes.json"
     if name in z.namelist():
         for t in json.loads(z.read(name)):

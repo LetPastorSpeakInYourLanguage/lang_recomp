@@ -1,13 +1,14 @@
-import { ArrowDown, ArrowUp, Bookmark, Cloud, Download, Library, ListVideo, LogOut, Repeat, RotateCcw, Share2, Users } from "lucide-react";
+import { ArrowDown, ArrowUp, Bookmark, Cloud, Library, ListVideo, LogOut, Repeat, Share2, Users } from "lucide-react";
 import { useState } from "react";
-import { api, fmtTime, parseTime, usePoll, type ClipKind, type FeedEntry, type PartCandidate } from "../api";
+import { api, fmtTime, parseTime, usePoll, type AppState, type ClipKind, type FeedEntry, type PartCandidate } from "../api";
 import { go, goCast, goClips, goShare } from "../router";
+import RunPanel from "../shell/RunPanel";
 import VideoForm, { LangOptions } from "../shell/VideoForm";
-import { Button, Empty, Panel, PlayButton, Progress, Tag, stateTone } from "../ui";
+import { Button, Empty, Panel, PlayButton, Tag, stateTone } from "../ui";
 
 const codes = (v: string) => v.split(/[\s,]+/).map((x) => x.trim().toLowerCase()).filter(Boolean);
 
-export default function Series({ id, onChanged }: { id: string; onChanged: () => void }) {
+export default function Series({ id, state, onChanged }: { id: string; state: AppState | null; onChanged: () => void }) {
   const s = usePoll(() => api.series(id), [id]);
   const [msg, setMsg] = useState<string | null>(null);
   if (s.error) return <Empty icon={<Library size={28} />} title="No such series">{s.error}</Empty>;
@@ -74,7 +75,7 @@ export default function Series({ id, onChanged }: { id: string; onChanged: () =>
       </Panel>
 
       {d.feed_url && <FromFeed id={id} unit={d.unit} onAdded={() => void reload()} />}
-      <ColabBatch id={id} unit={d.unit} total={sources.length} onChanged={() => void reload()} />
+      {sources.length > 0 && <RunPanel owner={`series:${id}`} videos={sources.map((p) => p.id)} name={d.name} state={state} onOpened={() => void reload()} />}
 
       {sources.length > 1 && <RepeatingParts id={id} unit={d.unit} />}
 
@@ -181,58 +182,6 @@ function Candidate({ c, onSave }: { c: PartCandidate; onSave: (c: PartCandidate,
         ))}
       </div>
     </div>
-  );
-}
-
-/** Run the whole series on Colab: batches of videos are downloaded into Drive, transcribed,
- *  aligned and diarized there; this PC only loads the results and plays from G:. */
-function ColabBatch({ id, unit, total, onChanged }: { id: string; unit: string; total: number; onChanged: () => void }) {
-  const st = usePoll(() => api.bulkStatus(id), [id], 20000);
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
-  if (!st.data || !total) return null;
-  const v = st.data.videos;
-  const jobs = st.data.jobs;
-  const running = jobs.filter((j) => j.state === "running" || j.state === "claimed");
-  async function run(fn: () => Promise<string>) {
-    setBusy(true); setMsg(null);
-    try { setMsg(await fn()); await st.reload(); onChanged(); } catch (e) { setMsg((e as Error).message); } finally { setBusy(false); }
-  }
-  return (
-    <Panel title="Colab batch"
-      actions={<>
-        {v.not_sent > 0 && <Button variant="primary" disabled={busy} onClick={() => void run(async () => {
-          const r = await api.bulkQueue(id); return `Queued ${r.videos} ${unit}s in ${r.jobs.length} batch(es). Open lb_worker.ipynb in Colab and Run all.`;
-        })}><Cloud size={12} />Send {v.not_sent} to Colab</Button>}
-        {v.done > 0 && <Button disabled={busy} onClick={() => void run(async () => {
-          const r = await api.bulkLoad(id); return `Loaded ${r.loaded.length}.${r.errors.length ? ` ${r.errors.length} could not be read yet.` : ""}`;
-        })}><Download size={12} />Load {v.done} finished</Button>}
-        {v.failed > 0 && <Button variant="ghost" disabled={busy} onClick={() => void run(async () => {
-          const r = await api.bulkRetry(id); return `Sent ${r.videos} back to Colab.`;
-        })}><RotateCcw size={12} />Retry {v.failed} failed</Button>}
-      </>}>
-      <div className="p-12 flex flex-col gap-8 text-11.5">
-        <div className="text-dim">Colab downloads each {unit} straight into your Drive and transcribes, aligns and finds the speakers there;
-          nothing is downloaded to this PC. Results arrive through Drive for Desktop and the video plays from G:. Voices are separated
-          later, only for a {unit} you dub.</div>
-        <div className="flex items-center gap-12 flex-wrap font-mono text-10.5">
-          <span className="text-good">{v.loaded} loaded</span><span>{v.done} ready to load</span><span>{v.queued} waiting on Colab</span>
-          <span className={v.failed ? "text-bad" : ""}>{v.failed} failed</span><span className="text-faint">{v.not_sent} not sent</span>
-        </div>
-        {total > 0 && <Progress value={(v.loaded + v.done) / total} tone="good" />}
-        {jobs.length > 0 && <div className="text-10.5 text-faint">
-          {jobs.length} batch{jobs.length === 1 ? "" : "es"} · {jobs.filter((j) => j.state === "done").length} done
-          {running.length > 0 && ` · running: ${running.map((j) => j.note || `${Math.round((j.progress ?? 0) * 100)}%`).join(", ")}`}
-          {v.queued > 0 && !running.length && " · waiting for Colab: open lb_worker.ipynb in Colab and choose Runtime → Run all"}
-        </div>}
-        {st.data.failures.length > 0 && (
-          <div className="border border-border rounded-3 max-h-[140px] overflow-y-auto divide-y divide-border">
-            {st.data.failures.map((f) => <div key={f.id} className="px-8 py-4 text-10.5"><span className="text-text">{f.name}</span> <span className="text-bad font-mono">{f.error}</span></div>)}
-          </div>
-        )}
-        {msg && <div className="text-11">{msg}</div>}
-      </div>
-    </Panel>
   );
 }
 

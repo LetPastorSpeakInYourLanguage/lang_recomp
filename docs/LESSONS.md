@@ -56,6 +56,11 @@
 - Imports run in the API process: restarting the API kills an in-flight download; check
   `/api/state` tasks before restarting.
 
+**Tests**
+- The settings module fixes its file path at import: a test that queues a job wrote it
+  into the real Drive job folder. `tests/conftest.py` now isolates settings and job folders
+  for every test — keep it.
+
 **Browser-pane testing**
 - After changing `router.ts` or other module-level code, reload the page: Vite's hot update
   can leave the old router running (Clips route rendered Home).
