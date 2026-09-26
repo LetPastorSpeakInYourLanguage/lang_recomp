@@ -1,11 +1,11 @@
-import { Activity, AudioLines, Clapperboard, FileText, FolderPlus, Languages, Library, Users } from "lucide-react";
+import { Activity, AudioLines, Bookmark, Clapperboard, FileText, FolderPlus, Languages, Library, Users } from "lucide-react";
 import type { ReactNode } from "react";
 import { fmtTime, type Project, type Series } from "../api";
-import { go, goSeries, type Screen } from "../router";
+import { go, goClips, goSeries, type Screen } from "../router";
 import { Tag } from "../ui";
 
-export default function Sidebar({ projects, series, project, screen, openSeries }: {
-  projects: Project[]; series: Series[]; project: Project | null; screen: Screen; openSeries: string | null;
+export default function Sidebar({ projects, series, project, screen, openSeries, clipsOpen }: {
+  projects: Project[]; series: Series[]; project: Project | null; screen: Screen; openSeries: string | null; clipsOpen: boolean;
 }) {
   const c = project?.counts;
   const items: { screen: Screen; label: string; icon: ReactNode; count?: string; locked?: boolean }[] = [
@@ -24,6 +24,10 @@ export default function Sidebar({ projects, series, project, screen, openSeries 
           <FolderPlus size={14} />
         </button>
       </div>
+      <button onClick={() => goClips()} style={{ borderLeftColor: clipsOpen ? "var(--accent)" : "transparent" }}
+        className={`w-full text-left border-0 border-l-2 pl-10 pr-12 py-4 flex items-center gap-6 text-11.5 ${clipsOpen ? "bg-sel font-semibold text-text" : "bg-transparent text-dim hover:bg-panel3"}`}>
+        <Bookmark size={11} className="text-accent" />Clips & collections
+      </button>
       <div className="overflow-y-auto max-h-[38%] pb-6">
         {series.map((s) => {
           const mine = projects.filter((p) => p.series_id === s.id).sort((a, b) => (a.position ?? 0) - (b.position ?? 0));

@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 
-/** Hash routes: #/ · #/s/<series> · #/p/<project>/<screen>. Hash routing keeps the static build
+/** Hash routes: #/ · #/clips[/<series>] · #/s/<series> · #/p/<project>/<screen>. Hash routing keeps the static build
  *  servable by FastAPI's StaticFiles with no server-side fallback. */
 export type Screen = "overview" | "characters" | "transcript" | "translate" | "voice" | "mix";
-export interface Route { project: string | null; screen: Screen; settings?: boolean; series?: string }
+export interface Route { project: string | null; screen: Screen; settings?: boolean; series?: string; clips?: { series: string | null } }
 
 function parse(): Route {
   if (location.hash.startsWith("#/settings")) return { project: null, screen: "overview", settings: true };
+  const c = location.hash.match(/^#\/clips(?:\/([^/]+))?/);
+  if (c) return { project: null, screen: "overview", clips: { series: c[1] ? decodeURIComponent(c[1]) : null } };
   const s = location.hash.match(/^#\/s\/([^/]+)/);
   if (s) return { project: null, screen: "overview", series: decodeURIComponent(s[1]) };
   const m = location.hash.match(/^#\/p\/([^/]+)(?:\/(\w+))?/);
@@ -22,6 +24,10 @@ export function useRoute(): Route {
     return () => window.removeEventListener("hashchange", on);
   }, []);
   return r;
+}
+
+export function goClips(series: string | null = null) {
+  location.hash = series ? `#/clips/${encodeURIComponent(series)}` : "#/clips";
 }
 
 export function goSeries(series: string) {

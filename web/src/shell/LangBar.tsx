@@ -27,6 +27,14 @@ export function useLang(project: Project): [string, (l: string) => void] {
 let catalogue: { code: string; name: string }[] | null = null;
 export const langName = (code: string) => catalogue?.find((l) => l.code === code)?.name ?? code;
 
+/** Load the language names once; re-renders the caller when they arrive (for langName). */
+export function useLangNames() {
+  const [, setList] = useState(catalogue ?? []);
+  useEffect(() => {
+    if (!catalogue) void api.languages().then((l) => { catalogue = l; setList(l); });
+  }, []);
+}
+
 /** Target-language chips, plus adding a language to the project. */
 export default function LangBar({ project, lang, onChange, onAdded, counts }: {
   project: Project; lang: string; onChange: (l: string) => void; onAdded: () => void; counts?: Record<string, number>;

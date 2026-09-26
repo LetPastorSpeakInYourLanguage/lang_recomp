@@ -302,7 +302,18 @@ def clip_kinds():
 @app.get("/api/clips")
 def list_clips(series: str | None = None, source: str | None = None, collection: int | None = None,
                kind: str | None = None, deleted: bool = False, lang: str | None = None):
-    return library.clips(series, source, collection, kind, deleted, lang)
+    """Clips, each with its source's name and the languages whose mix is rendered (so
+    the clip can be played dubbed, as a slice of that mix)."""
+    out, seen = library.clips(series, source, collection, kind, deleted, lang), {}
+    for c in out:
+        pid = c["source_id"]
+        if pid not in seen:
+            p = db.row("SELECT name FROM projects WHERE id=?", pid)
+            seen[pid] = {"name": p["name"] if p else pid,
+                         "mixed": {t: (mix.mix_dir(pid, t) / "mix.wav").stat().st_mtime for t in project.targets(pid)
+                                   if (mix.mix_dir(pid, t) / "mix.wav").exists()} if p else {}}
+        c["source_name"], c["mixed"] = seen[pid]["name"], seen[pid]["mixed"]
+    return out
 
 
 @app.post("/api/clips")

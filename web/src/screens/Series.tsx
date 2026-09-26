@@ -1,7 +1,7 @@
-import { ArrowDown, ArrowUp, Library, ListVideo, LogOut } from "lucide-react";
+import { ArrowDown, ArrowUp, Bookmark, Library, ListVideo, LogOut } from "lucide-react";
 import { useState } from "react";
 import { api, fmtTime, parseTime, usePoll, type FeedEntry } from "../api";
-import { go } from "../router";
+import { go, goClips } from "../router";
 import VideoForm, { LangOptions } from "../shell/VideoForm";
 import { Button, Empty, Panel, Tag, stateTone } from "../ui";
 
@@ -39,6 +39,8 @@ export default function Series({ id, onChanged }: { id: string; onChanged: () =>
             <Library size={15} className="text-accent" />
             <Field value={d.name} onSave={(v) => v.trim() && void save({ name: v })} className="text-15 font-semibold" />
             <Tag>{d.label}</Tag>
+            <span className="flex-1" />
+            <Button onClick={() => goClips(id)}><Bookmark size={12} />Clips from this series</Button>
           </div>
           <div className="text-11.5 text-dim">
             Every {d.unit} added here is transcribed from <b className="font-mono">{d.src_lang}</b> and dubbed into the series' languages;

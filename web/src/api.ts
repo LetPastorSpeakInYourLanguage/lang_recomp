@@ -37,6 +37,16 @@ export interface Series {
   sources?: Project[];
 }
 export interface FeedEntry { id: string; title: string; url: string; duration: number | null; section: string; live: boolean; added: boolean }
+export type ClipKind = "clip" | "intro" | "opener" | "outro" | "jingle" | "recurring";
+export interface ClipLine { id: number; source_id: string; start: number; end: number; speaker: string | null; text: string; tr: string }
+export interface Clip {
+  id: number; series_id: string | null; source_id: string; source_name?: string; title: string; kind: ClipKind; note: string;
+  rev: number; segments: { source_id: string; start: number; end: number }[]; duration: number; recurring: boolean;
+  collections: number[]; deleted: number; lines?: ClipLine[];
+  /** languages whose mix of the source is rendered → its mtime (for cache-busting) */
+  mixed?: Record<string, number>;
+}
+export interface Collection { id: number; name: string; items: number; deleted: number }
 export interface NewVideo { name: string; source: string; clip_start?: number | null; clip_end?: number | null; max_speakers?: number | null }
 
 export interface Job { id: string; stage: string; role: string; root: string; created: number; state: string | null; progress: number | null; error: string | null; result: Record<string, unknown> | null; elapsed_s: number | null; heartbeat: number | null }
@@ -109,6 +119,19 @@ export const api = {
   seriesFeed: (s: string, limit = 100) => req<{ title: string; channel: string | null; entries: FeedEntry[] }>("GET", `/api/series/${s}/feed?limit=${limit}`),
   addFromFeed: (s: string, items: Pick<FeedEntry, "id" | "title" | "url">[], clip: { clip_start?: number | null; clip_end?: number | null } = {}) =>
     req<{ added: string[]; skipped: { id: string; reason: string }[] }>("POST", `/api/series/${s}/feed/add`, { items, ...clip }),
+  clips: (q: { series?: string; source?: string; collection?: number; kind?: ClipKind; deleted?: boolean; lang?: string } = {}) =>
+    req<Clip[]>("GET", `/api/clips?${new URLSearchParams(Object.entries(q).filter(([, v]) => v !== undefined && v !== "").map(([k, v]) => [k, String(v)])).toString()}`),
+  createClip: (b: { source_id: string; title: string; kind?: ClipKind; note?: string; first_line?: number; last_line?: number; chapter_id?: number; start?: number; end?: number }) =>
+    req<Clip>("POST", "/api/clips", b),
+  patchClip: (id: number, b: Partial<Pick<Clip, "title" | "kind" | "note">>) => req<Clip>("PATCH", `/api/clips/${id}`, b),
+  removeClip: (id: number) => req<Clip>("DELETE", `/api/clips/${id}`),
+  restoreClip: (id: number) => req<Clip>("POST", `/api/clips/${id}/restore`),
+  setClipCollections: (id: number, collection_ids: number[]) => req<{ collection_ids: number[] }>("PUT", `/api/clips/${id}/collections`, { collection_ids }),
+  collections: (deleted = false) => req<Collection[]>("GET", `/api/collections?deleted=${deleted}`),
+  createCollection: (name: string) => req<Collection>("POST", "/api/collections", { name }),
+  renameCollection: (id: number, name: string) => req<Collection>("PATCH", `/api/collections/${id}`, { name }),
+  archiveCollection: (id: number) => req<Collection>("DELETE", `/api/collections/${id}`),
+  restoreCollection: (id: number) => req<Collection>("POST", `/api/collections/${id}/restore`),
   deleteSeries: (s: string) => req<{ released: number }>("DELETE", `/api/series/${s}`),
   orderSeries: (s: string, ids: string[]) => req<Project[]>("PUT", `/api/series/${s}/order`, { ids }),
   attachProject: (p: string, series_id: string | null) => req<Project>("PUT", `/api/projects/${p}/series`, { series_id }),

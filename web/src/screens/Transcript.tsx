@@ -1,6 +1,6 @@
 import { AlertTriangle, Check, FileText, Keyboard, Merge, Pause, Play, Scissors, Split } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, fmtTime, usePoll, type Chapter, type Character, type Project, type Sentence } from "../api";
+import { api, fmtTime, usePoll, type Chapter, type Character, type ClipKind, type Project, type Sentence } from "../api";
 import { Empty, SpeakerDot, Tag } from "../ui";
 
 /** A line whose words drifted: Whisper dropped punctuation/capitals there, and the
@@ -14,6 +14,11 @@ export default function Transcript({ project, onChanged }: { project: Project; o
   const rows = sents.data ?? [];
   const cast = chars.data ?? [];
   const [sel, setSel] = useState(0);
+  // A range of lines: from `anchor` to `sel` (Shift+J/K, Shift+click); null = just `sel`.
+  const [anchor, setAnchor] = useState<number | null>(null);
+  const [clipDraft, setClipDraft] = useState<{ title: string; kind: ClipKind } | null>(null);
+  const lo = Math.min(anchor ?? sel, sel);
+  const hi = Math.max(anchor ?? sel, sel);
   const [editing, setEditing] = useState<number | null>(null);
   const [nowId, setNowId] = useState<number | null>(null);
   const [playing, setPlaying] = useState(false);
@@ -49,6 +54,18 @@ export default function Transcript({ project, onChanged }: { project: Project; o
     await Promise.all([sents.reload(), chaps.reload()]);
     setNote(`Split line ${fmtTime(s.start)} after word ${wordIndex}.`);
     onChanged();
+  }
+
+  async function saveClip() {
+    if (!clipDraft?.title.trim()) return;
+    try {
+      const c = await api.createClip({ source_id: project.id, first_line: rows[lo].id, last_line: rows[hi].id, title: clipDraft.title, kind: clipDraft.kind });
+      setClipDraft(null);
+      setAnchor(null);
+      setNote(`Saved "${c.title}" (${c.duration.toFixed(1)}s) to Clips & collections.`);
+    } catch (e) {
+      setNote((e as Error).message);
+    }
   }
 
   /** Start a chapter at this line, or fold the chapter it opens into the one before. */
@@ -114,8 +131,12 @@ export default function Transcript({ project, onChanged }: { project: Project; o
       const s = rows[sel];
       if (!s) return;
       const k = e.key.toLowerCase();
+      const extend = e.shiftKey && (k === "j" || k === "k" || e.key === "ArrowDown" || e.key === "ArrowUp");
+      if (k === "j" || k === "k" || e.key === "ArrowDown" || e.key === "ArrowUp") setAnchor(extend ? (anchor ?? sel) : null);
       if (k === "j" || e.key === "ArrowDown") { e.preventDefault(); setSel(Math.min(rows.length - 1, sel + 1)); }
       else if (k === "k" || e.key === "ArrowUp") { e.preventDefault(); setSel(Math.max(0, sel - 1)); }
+      else if (k === "s") { e.preventDefault(); setClipDraft({ title: rows[lo].text.split(/\s+/).slice(0, 6).join(" "), kind: "clip" }); }
+      else if (e.key === "Escape") setAnchor(null);
       else if (e.key === " ") { e.preventDefault(); playLine(sel); }
       else if (e.key === "Enter") { e.preventDefault(); setEditing(s.id); }
       else if (k === "c") void toggleChapter(s);
@@ -143,6 +164,20 @@ export default function Transcript({ project, onChanged }: { project: Project; o
             <span className="font-mono">{reviewed}/{rows.length} reviewed</span>
             <div className="flex-1 h-4 bg-panel3 rounded-full overflow-hidden"><div className="h-full bg-good" style={{ width: `${rows.length ? (reviewed / rows.length) * 100 : 0}%` }} /></div>
           </div>
+          {clipDraft && (
+            <form className="border border-accent bg-soft rounded-3 px-10 py-6 text-11 flex items-center gap-6 flex-wrap"
+              onSubmit={(e) => { e.preventDefault(); void saveClip(); }}>
+              <span className="font-semibold">Save {hi - lo + 1} line{hi > lo ? "s" : ""} as a clip</span>
+              <input className="field flex-1 min-w-[140px]" autoFocus value={clipDraft.title} onChange={(e) => setClipDraft({ ...clipDraft, title: e.target.value })}
+                onKeyDown={(e) => { if (e.key === "Escape") setClipDraft(null); }} />
+              <select className="field" value={clipDraft.kind} onChange={(e) => setClipDraft({ ...clipDraft, kind: e.target.value as ClipKind })}
+                title="intro, opener, outro, jingle or recurring: a part that repeats in other videos of the series">
+                {(["clip", "intro", "opener", "outro", "jingle", "recurring"] as const).map((k) => <option key={k} value={k}>{k}</option>)}
+              </select>
+              <button type="submit" className="h-22 px-8 rounded-2 bg-accent text-white border-0 text-11" disabled={!clipDraft.title.trim()}>Save</button>
+              <button type="button" onClick={() => setClipDraft(null)} className="bg-transparent border-0 text-dim p-0">×</button>
+            </form>
+          )}
           {note && <div className="border border-accent bg-soft rounded-3 px-10 py-6 text-11 text-text flex gap-8"><span className="flex-1">{note}</span>
             <button onClick={() => setNote(null)} className="bg-transparent border-0 text-dim p-0">×</button></div>}
           <div className="border border-border rounded-3 bg-panel p-10 text-11 text-dim flex flex-col gap-4 min-h-0 overflow-y-auto">
@@ -155,6 +190,8 @@ export default function Transcript({ project, onChanged }: { project: Project; o
               <span>1–{Math.max(1, cast.length)}</span><span className="font-sans">set speaker: {cast.map((c, i) => `${i + 1} ${c.name}`).join(", ")}</span>
               <span>M</span><span className="font-sans">merge with the next line</span>
               <span>R</span><span className="font-sans">mark reviewed and move on</span>
+              <span>Shift+J/K</span><span className="font-sans">select a range of lines (or Shift+click)</span>
+              <span>S</span><span className="font-sans">save the selected lines as a clip (Clips & collections)</span>
               <span>C</span><span className="font-sans">start a new chapter here, or remove the one this line starts (translation context stops at chapters)</span>
             </div>
           </div>
@@ -167,6 +204,7 @@ export default function Transcript({ project, onChanged }: { project: Project; o
           const head = i === 0 || !!s.chapter_head;
           const ch = chapterById[s.chapter];
           const on = i === sel;
+          const inRange = anchor !== null && i >= lo && i <= hi;
           return (
             <div key={s.id} data-i={i}>
               {head && (
@@ -177,8 +215,8 @@ export default function Transcript({ project, onChanged }: { project: Project; o
                   <div className="flex-1 h-px bg-border" />
                 </div>
               )}
-              <div onClick={() => setSel(i)}
-                className={`grid grid-cols-[56px_150px_1fr_auto] items-start gap-8 px-8 py-6 border-l-2 rounded-r-3 ${on ? "bg-sel border-accent" : nowId === s.id ? "bg-soft border-transparent" : "border-transparent hover:bg-panel"}`}>
+              <div onClick={(e) => { setAnchor(e.shiftKey ? (anchor ?? sel) : null); setSel(i); }}
+                className={`grid grid-cols-[56px_150px_1fr_auto] items-start gap-8 px-8 py-6 border-l-2 rounded-r-3 ${on ? "bg-sel border-accent" : inRange ? "bg-sel border-accent2" : nowId === s.id ? "bg-soft border-transparent" : "border-transparent hover:bg-panel"}`}>
                 <button onClick={(e) => { e.stopPropagation(); setSel(i); playLine(i); }} className="flex items-center gap-4 text-10 font-mono text-dim bg-transparent border-0 p-0 pt-2 hover:text-accent">
                   {playing && nowId === s.id ? <Pause size={10} /> : <Play size={10} />}{fmtTime(s.start)}
                 </button>

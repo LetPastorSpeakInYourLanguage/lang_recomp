@@ -1,6 +1,7 @@
 import { api, usePoll } from "./api";
 import { useRoute } from "./router";
 import Characters from "./screens/Characters";
+import Clips from "./screens/Clips";
 import Home from "./screens/Home";
 import Overview from "./screens/Overview";
 import Series from "./screens/Series";
@@ -25,6 +26,7 @@ export default function App() {
 
   let body;
   if (route.settings) body = <Settings state={state.data} onSaved={() => void state.reload()} />;
+  else if (route.clips) body = <Clips seriesId={route.clips.series} series={seriesList} projects={list} />;
   else if (route.series) body = <Series key={route.series} id={route.series} onChanged={refresh} />;
   else if (!route.project || (!project && projects.data)) body = <Home projects={list} series={seriesList} reload={refresh} />;
   else if (!project) body = null;
@@ -39,7 +41,7 @@ export default function App() {
     <div className="h-full flex flex-col">
       <TopBar project={project} screen={route.screen} settingsOpen={!!route.settings} />
       <div className="flex-1 flex min-h-0">
-        <Sidebar projects={list} series={seriesList} project={project} screen={route.screen} openSeries={route.series ?? null} />
+        <Sidebar projects={list} series={seriesList} project={project} screen={route.screen} openSeries={route.series ?? null} clipsOpen={!!route.clips} />
         <main className="flex-1 min-w-0 min-h-0 overflow-y-auto flex flex-col">
           {projects.error && <div className="m-16 p-10 border border-bad bg-badbg text-bad rounded-3 text-11.5">API unreachable: {projects.error}</div>}
           {body}
