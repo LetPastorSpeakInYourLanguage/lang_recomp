@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import aligners, chapters, db, feeds, langs, mix, project, series, settings, tasks, voice
+from . import aligners, chapters, db, feeds, langs, library, mix, project, series, settings, tasks, voice
 
 app = FastAPI(title="Lang-Bridge")
 WEB = Path(__file__).resolve().parents[1] / "web" / "dist"
@@ -246,6 +246,164 @@ def add_from_feed(sid: str, body: FeedPick):
         except (ValueError, KeyError) as e:
             skipped.append({"id": it.get("id"), "reason": str(e)})
     return {"added": added, "skipped": skipped}
+
+
+# ---- library: clips and collections --------------------------------------------------------
+def _clip(cid: int) -> dict:
+    try:
+        return library.get_clip(cid)
+    except KeyError:
+        raise HTTPException(404, "no such clip")
+
+
+def _coll(cid: int) -> dict:
+    try:
+        return library.get_collection(cid)
+    except KeyError:
+        raise HTTPException(404, "no such collection")
+
+
+class NewClip(BaseModel):
+    source_id: str
+    title: str
+    kind: str = "clip"
+    note: str = ""
+    # the span: two line ids, a whole chapter, or explicit times
+    first_line: int | None = None
+    last_line: int | None = None
+    chapter_id: int | None = None
+    start: float | None = None
+    end: float | None = None
+
+
+class ClipPatch(BaseModel):
+    title: str | None = None
+    kind: str | None = None
+    note: str | None = None
+
+
+class Segments(BaseModel):
+    segments: list[dict]
+
+
+class Memberships(BaseModel):
+    collection_ids: list[int]
+
+
+class Named(BaseModel):
+    name: str
+
+
+@app.get("/api/clips/kinds")
+def clip_kinds():
+    return {"kinds": list(library.KINDS), "recurring": sorted(library.RECURRING)}
+
+
+@app.get("/api/clips")
+def list_clips(series: str | None = None, source: str | None = None, collection: int | None = None,
+               kind: str | None = None, deleted: bool = False, lang: str | None = None):
+    return library.clips(series, source, collection, kind, deleted, lang)
+
+
+@app.post("/api/clips")
+def new_clip(body: NewClip):
+    _p(body.source_id)
+    try:
+        if body.first_line is not None:
+            start, end = library.span_of_lines(body.source_id, body.first_line, body.last_line or body.first_line)
+        elif body.chapter_id is not None:
+            start, end = library.chapter_span(body.source_id, body.chapter_id)
+        elif body.start is not None and body.end is not None:
+            start, end = body.start, body.end
+        else:
+            raise ValueError("give the clip's lines, chapter or times")
+        return library.create_clip(body.source_id, start, end, body.title, body.kind, body.note)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/clips/{cid}")
+def get_clip(cid: int, rev: int | None = None, lang: str | None = None):
+    _clip(cid)
+    try:
+        c = library.get_clip(cid, rev)
+    except KeyError:
+        raise HTTPException(404, "no such revision")
+    return c | {"lines": library.clip_lines(c, lang)}
+
+
+@app.patch("/api/clips/{cid}")
+def patch_clip(cid: int, body: ClipPatch):
+    _clip(cid)
+    try:
+        return library.update_clip(cid, body.title, body.kind, body.note)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/clips/{cid}/revisions")
+def revise_clip(cid: int, body: Segments):
+    _clip(cid)
+    try:
+        return library.revise_clip(cid, body.segments)
+    except (ValueError, KeyError) as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/api/clips/{cid}")
+def delete_clip(cid: int):
+    _clip(cid)
+    return library.remove_clip(cid)
+
+
+@app.post("/api/clips/{cid}/restore")
+def restore_clip(cid: int):
+    _clip(cid)
+    return library.remove_clip(cid, restore=True)
+
+
+@app.put("/api/clips/{cid}/collections")
+def clip_collections(cid: int, body: Memberships):
+    _clip(cid)
+    try:
+        return {"collection_ids": library.set_memberships("clip", cid, body.collection_ids)}
+    except KeyError:
+        raise HTTPException(404, "no such collection")
+
+
+@app.get("/api/collections")
+def list_collections(deleted: bool = False):
+    return library.collections(deleted)
+
+
+@app.post("/api/collections")
+def new_collection(body: Named):
+    try:
+        return library.create_collection(body.name)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.patch("/api/collections/{cid}")
+def rename_collection(cid: int, body: Named):
+    _coll(cid)
+    try:
+        return library.rename_collection(cid, body.name)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/api/collections/{cid}")
+def archive_collection(cid: int):
+    """Archives the folder; its clips stay."""
+    _coll(cid)
+    return library.archive_collection(cid)
+
+
+@app.post("/api/collections/{cid}/restore")
+def restore_collection(cid: int):
+    _coll(cid)
+    return library.archive_collection(cid, restore=True)
 
 
 class Order(BaseModel):

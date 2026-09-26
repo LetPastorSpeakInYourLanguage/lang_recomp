@@ -50,6 +50,24 @@ CREATE TABLE IF NOT EXISTS chapters (
   project_id TEXT, id INTEGER, start REAL, title TEXT DEFAULT '', updated REAL,
   PRIMARY KEY (project_id, id)
 );
+-- The team library (app/library.py). A clip is a saved span of a source; its spans are
+-- revisioned like recomposer's cut_revision, so a journey can pin what it used. Ids are
+-- AUTOINCREMENT: never reused. Removing is a soft delete; archiving a collection never
+-- touches its clips.
+CREATE TABLE IF NOT EXISTS clips (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, series_id TEXT, source_id TEXT NOT NULL, title TEXT NOT NULL,
+  kind TEXT DEFAULT 'clip', note TEXT DEFAULT '', created REAL, updated REAL, deleted INTEGER DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS clip_revisions (
+  clip_id INTEGER, rev INTEGER, segments TEXT NOT NULL, created REAL, PRIMARY KEY (clip_id, rev)
+);
+CREATE TABLE IF NOT EXISTS collections (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, created REAL, deleted INTEGER DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS collection_items (
+  collection_id INTEGER, item_type TEXT, item_id INTEGER, added REAL,
+  PRIMARY KEY (collection_id, item_type, item_id)
+);
 CREATE TABLE IF NOT EXISTS takes (
   project_id TEXT, sentence_id INTEGER, job_id TEXT, take INTEGER, path TEXT, text TEXT,
   sim REAL, cer REAL, dur REAL, dur_s REAL, asr TEXT, chosen INTEGER DEFAULT 0, created REAL,
