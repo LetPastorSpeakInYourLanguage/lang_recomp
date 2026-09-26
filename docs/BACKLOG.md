@@ -31,6 +31,8 @@ local disks); then teams working on shared metadata with distributed compute.*
 - [ ] **RUN** Real run #1 on Colab — **queued** as `runs/20260926-171244-6-minute-english` (6 episodes, end to end, captions 6 / aligned 2); **waiting for the owner to press Run all in Colab**. Fix what breaks. Then the whole series (transcribe all; dub a batch).
 - [ ] **RUN** Open results in the app; play a dubbed MP4 from G: (Mix & export) — owner's acceptance.
 - [ ] **RUN** Summarise the captions report for the owner (Whisper vs YouTube captions raw vs aligned: WER, timing).
+- [ ] **RUN** Stale jobs in a device's queue run before new work (a 01:33 `tts_bakeoff` experiment ran first and downgraded protobuf in the Colab session). Add a "Queue on this device" view in the app with cancel, and have the notebook list what it will do before starting.
+- [ ] **RUN** `tts_bakeoff` installs Seed-VC deps into the shared Colab environment (protobuf 3.19.6): isolate it in its own venv or retire the stage.
 - [ ] **UI** Check the new screens in the browser (the in-app browser tools were unavailable when they were built): Library, Run panel, Home libraries, Series run panel, Cast, Share, Open a shared work.
 - [ ] **BULK** ~~Clean up `meta.remote` markers~~ (done 2026-09-26); still decide to retire `app/bulk.py` + `/api/series/*/bulk` + bulk stage, or keep only `fetch_remote` for package media.
 
