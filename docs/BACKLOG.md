@@ -16,6 +16,7 @@ local disks); then teams working on shared metadata with distributed compute.*
 |---|---|---|---|
 | TEAM | Team hub: shared metadata, media on everyone's devices, distributed compute | [TEAM.md](TEAM.md) | approved, not started |
 | LIB | Library folders (Drive + local disks), folder standard | [LIBRARY_FOLDERS.md](LIBRARY_FOLDERS.md), `app/libraries.py` | built, not yet used on real folders |
+| RES | Research notebook: the worker is a pipeline you run by hand on a GPU, not a job picker | [colab/README.md](../colab/README.md), `worker/lb_worker/research.py` | built + stub-tested; **first real Colab run pending** |
 | RUN | Colab/device runs end to end, captions trial, batching | `app/runs.py`, `worker/lb_worker/stages/run.py` | built + stub-tested, **not run on Colab yet** |
 | BULK | Whole channel on Colab (bulk stage) | `app/bulk.py` | superseded by RUN (jobs cancelled) |
 | A5 | Characters belong to the work; works travel (.lbwork) | [PLAN.md](PLAN.md#a5-in-detail), [PACKAGE.md](PACKAGE.md) | done, merged |
@@ -28,10 +29,12 @@ local disks); then teams working on shared metadata with distributed compute.*
 - [x] **RUN** Publish `app/` to Drive with the worker (`sync_worker.py`), so the runner can import it on Colab (`root/worker/app`).
 - [x] **RUN** Runner installs yt-dlp / faster-whisper / soundfile; JS runtime node→deno fallback. *(still to confirm on Colab: chromaprint/rubberband in its ffmpeg — fallbacks exist)*
 - [x] **RUN** Merge `feat/colab-run` into `main` (build pass before/after), then `sync_worker` (worker changed a lot).
-- [ ] **RUN** Real run #1 on Colab — **queued** as `runs/20260926-171244-6-minute-english` (6 episodes, end to end, captions 6 / aligned 2); **waiting for the owner to press Run all in Colab**. Fix what breaks. Then the whole series (transcribe all; dub a batch).
+- [x] **RES** Research runner `lb_worker/research.py` (`run_folder` over a folder/YouTube links, `run_manifest` for an app-prepared run), notebook `colab/lang_bridge.ipynb` (built by `scripts/build_notebook.py`, `HF_TOKEN` in settings, code cloned from GitHub, Drive mounted by the person), guide `colab/README.md`; Colab runs from the app are prepare-only; `sync_worker.py` removed.
+- [ ] **RES** Real run #1 with the notebook: `RUN_FOLDER = /content/drive/MyDrive/LangBridge/runs/20260926-171244-6-minute-english` (6 episodes, end to end, captions 6 / aligned 2) — **owner runs it**. Fix what breaks. Then the whole series (transcribe all; dub a batch).
+- [ ] **RES** Retire the Drive job-queue path for `colab` folders (worker `loop.py` on Colab, heartbeat/online status for Drive roots, "Load N finished"); keep the job folder protocol for the local worker only.
 - [ ] **RUN** Open results in the app; play a dubbed MP4 from G: (Mix & export) — owner's acceptance.
 - [ ] **RUN** Summarise the captions report for the owner (Whisper vs YouTube captions raw vs aligned: WER, timing).
-- [ ] **RUN** Stale jobs in a device's queue run before new work (a 01:33 `tts_bakeoff` experiment ran first and downgraded protobuf in the Colab session). Add a "Queue on this device" view in the app with cancel, and have the notebook list what it will do before starting.
+- [ ] ~~**RUN** Stale jobs in a device's queue run before new work~~ (moot for Colab after the RES pivot; still valid for the local worker) (a 01:33 `tts_bakeoff` experiment ran first and downgraded protobuf in the Colab session). Add a "Queue on this device" view in the app with cancel, and have the notebook list what it will do before starting.
 - [ ] **RUN** `tts_bakeoff` installs Seed-VC deps into the shared Colab environment (protobuf 3.19.6): isolate it in its own venv or retire the stage.
 - [ ] **UI** Check the new screens in the browser (the in-app browser tools were unavailable when they were built): Library, Run panel, Home libraries, Series run panel, Cast, Share, Open a shared work.
 - [ ] **BULK** ~~Clean up `meta.remote` markers~~ (done 2026-09-26); still decide to retire `app/bulk.py` + `/api/series/*/bulk` + bulk stage, or keep only `fetch_remote` for package media.

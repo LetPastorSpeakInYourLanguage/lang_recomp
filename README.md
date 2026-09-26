@@ -55,67 +55,29 @@ Your projects, settings and exports are stored in `data/` inside the app folder
 
 ---
 
-## 3. Set up the Google Drive + Colab worker
+## 3. The heavy pipeline on Colab (or any GPU machine)
 
-### 3.1 Google Drive for Desktop
+Transcription, speaker detection, separation, cloned voices and mixing run as a
+**research notebook** you start yourself: **[`colab/lang_bridge.ipynb`](colab/lang_bridge.ipynb)**.
+It is not a background service of the app and picks up nothing on its own: you give it a
+folder of videos (and/or YouTube links) and an output folder; it runs the stages and writes
+a `.lbwork` package the app opens (Home → *Open a shared work*), playing media where they are.
 
-1. Install **Google Drive for Desktop** (<https://www.google.com/drive/download/>) and sign in.
-2. It adds a drive letter to Explorer (often **`G:`**) with a **`My Drive`** folder in it.
-   Note the full path, e.g. `G:\My Drive`.
-3. The job folder will be **`<drive>:\My Drive\LangBridge`**. The app creates it; Colab
-   sees the same folder as `/content/drive/MyDrive/LangBridge`.
+Full guide, including how to put the notebook in your own Google Drive:
+**[colab/README.md](colab/README.md)**. In short:
 
-> Keep Drive for Desktop in its default *streaming* mode: files sync both ways within
-> seconds to a minute. The app shows jobs as queued until Colab's results sync back.
+1. Open `https://colab.research.google.com/github/LetPastorSpeakInYourLanguage/lang_recomp/blob/main/colab/lang_bridge.ipynb`
+   and *File → Save a copy in Drive* (or upload the file to `My Drive/Colab Notebooks`).
+2. *Runtime → Change runtime type → T4 GPU*; mount Drive yourself if your videos are there.
+3. Fill in the settings (`VIDEOS`, `OUTPUT`, `TARGETS`, your `HF_TOKEN`) and *Run all*.
+   **Never share or commit the notebook with your token filled in.**
 
-### 3.2 Point the app at it
+With **Google Drive for Desktop** (<https://www.google.com/drive/download/>) the output
+folder shows up on your PC (e.g. `G:\My Drive\LangBridge-output`), so the app plays the
+dubs straight from there. The app's Run panel can also *prepare* a run for chosen videos
+(device = a Drive folder): put the printed folder in the notebook's `RUN_FOLDER`.
 
-In the app, open **Folders** (top right). The first folder is *Colab GPU (Google Drive)*:
-set its path to your `…\My Drive\LangBridge` (use your drive letter) and **Save**.
-
-### 3.3 Publish the worker to Drive
-
-From the app folder:
-
-```bash
-python scripts/sync_worker.py --root "G:/My Drive/LangBridge"
-```
-
-This copies the worker code and a notebook, **`worker/lb_worker.ipynb`**, into the
-Drive folder. Run it again whenever you update the app: a Colab session that is
-running picks up the new code by itself between jobs.
-
-### 3.4 Add your Hugging Face token to Colab (once)
-
-1. Open <https://colab.research.google.com>, then **File → Open notebook → Google Drive**
-   and open **`LangBridge/worker/lb_worker.ipynb`**.
-2. Click the **key icon** in the left sidebar → **Add new secret**, name **`HF_TOKEN`**,
-   paste your token, turn on **Notebook access**.
-
-### 3.5 Run it when you have work queued
-
-The notebook is **passive**: it processes whatever is queued and then stops and
-**releases the GPU**. It does not sit polling (Colab terminates long idle loops, and it
-wastes your free GPU time).
-
-1. In the app, queue work for the Colab folder (e.g. *Create & analyze*, *Voice all lines*;
-   pick the folder in the *Run on* selector).
-2. In Colab: **Runtime → Change runtime type → T4 GPU → Save**, then **Runtime → Run all**.
-3. Allow Drive access when asked. Watch progress in the app (*Analysis & jobs*, *Voice*);
-   the status bar shows the worker online / busy.
-4. When the queue is empty the notebook prints *All queued jobs are done* and disconnects.
-   (Set `RELEASE_GPU_WHEN_DONE = False` in its first code cell to keep the runtime.)
-
-Models are cached in **`My Drive/LangBridge/cache`** (a few GB, up to ~10 GB with every
-voicing model), so only the first session downloads them. Make sure your Drive has room.
-
-**If something goes wrong**
-- Every job writes `log.txt` into its folder as it runs; the app shows it (*Log* button).
-- A session that dies mid-job leaves its heartbeat stale; the next session **takes the job
-  over and resumes** (finished takes and stages are kept).
-- *Runtime → Restart session* keeps `/content`; if an install looks half-done, use
-  *Runtime → Disconnect and delete runtime* and Run all again.
-- Free Colab has usage limits; if you are refused a GPU, try later or use the local worker.
+On a server: `from lb_worker.research import run_folder` (see `worker/lb_worker/research.py`).
 
 ---
 
@@ -228,7 +190,7 @@ app/        FastAPI backend: projects, jobs, translation, voice, mix/export (SQL
 web/        React + Vite + Tailwind UI
 worker/     lb_worker: the job-folder protocol, the worker loop, and the stages
             (separate, asr, align, diarize, voice, prefetch, tts_bakeoff)
-scripts/    sync_worker.py (publish to Drive), local_worker.py, watch.py, ...
+scripts/    build_notebook.py (writes colab/lang_bridge.ipynb), local_worker.py, watch.py, ...
 spikes/     research experiments (voice bake-off)
 tests/      unit tests
 ```

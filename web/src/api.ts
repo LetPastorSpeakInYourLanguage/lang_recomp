@@ -88,7 +88,7 @@ export interface LibraryWork {
 }
 export type Stage = "fetch" | "transcribe" | "translate" | "voice" | "mix";
 export interface RunInfo {
-  run: string; name?: string; job?: string; root: string; state: string | null; progress?: number | null; note?: string | null;
+  run: string; name?: string; job?: string | null; root: string; state: string | null; progress?: number | null; note?: string | null;
   stages?: Stage[]; videos?: number; works?: number; done?: Record<Stage, number>; failed?: number; saved?: string[];
   has_results?: boolean; created?: number; finished?: number | null; timings?: Record<string, number>;
   report?: { captions: { video: string; kind: string; captions_raw?: CapCompare; captions_aligned?: CapCompare }[] } | null;
@@ -222,7 +222,7 @@ export const api = {
   loadSubtitles: (id: string, only?: string[]) => req<{ loaded: number; failed: { id: string; error: string }[] }>(
     "POST", `/api/libraries/${id}/load_subtitles`, { only }),
   createRun: (b: { videos: string[]; root: string; stages?: Stage[]; options?: Record<string, unknown>; name?: string; owner?: string }) =>
-    req<{ run: string; job: string; root: string; videos: number; works: number; stages: Stage[] }>("POST", "/api/runs", b),
+    req<{ run: string; job?: string | null; dir?: string | null; root: string; videos: number; works: number; stages: Stage[] }>("POST", "/api/runs", b),
   runs: (owner: string) => req<RunInfo[]>("GET", `/api/runs?owner=${encodeURIComponent(owner)}`),
   openRun: (root: string, run: string) => req<{ works: string[]; sources: { added: string[]; matched: string[] }; lines: number; notes: string[] }>(
     "POST", `/api/runs/${root}/${run}/open`),

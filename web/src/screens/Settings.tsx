@@ -80,8 +80,8 @@ export default function Settings({ state, onSaved }: { state: AppState | null; o
             <div className="px-12 pb-10 text-10.5 text-dim flex items-start gap-6">
               <Cpu size={11} className="mt-2 flex-none" />
               {r.kind === "colab" ? (
-                <span>Must be inside your Google Drive. Open <span className="font-mono">worker/lb_worker.ipynb</span> from this folder in Colab,
-                  choose a T4 GPU and Run all. Handles every stage, including voicing.</span>
+                <span>Must be inside your Google Drive. Runs for this folder are only prepared here: run them yourself with
+                  <span className="font-mono">colab/lang_bridge.ipynb</span> (setting <span className="font-mono">RUN_FOLDER</span>) on a GPU. See colab/README.md.</span>
               ) : (
                 <span>Double-click <span className="font-mono">Local-Worker.cmd</span> in the app folder. It keeps its own Python, models
                   and cache inside this folder. Separation, alignment and voicing run on the Intel Arc GPU when its environment is set up;

@@ -77,7 +77,7 @@ def create(sid: str, root_id: str, stages: list[str] | None = None, sources: lis
 
 
 def create_for(pids: list[str], root_id: str, stages: list[str] | None = None, options: dict | None = None,
-               name: str = "run", owner: str | None = None) -> dict:
+               name: str = "run", owner: str | None = None, submit: bool = True) -> dict:
     """Send a run for any videos — of one work or of many (a library selection) — to a
     device. Videos of different works are batched together; each work gets its results."""
     r = settings.root(root_id)
@@ -100,13 +100,19 @@ def create_for(pids: list[str], root_id: str, stages: list[str] | None = None, o
         "run": run_id, "name": name, "created": time.time(), "works": works, "src_lang": works[0]["src_lang"] if works else "en",
         "stages": stages, "sources": [project.get(p)["uid"] for p in pids], "options": opts},
         ensure_ascii=False, indent=1), encoding="utf-8")
-    q = project.queue(r["id"])
-    job = q.submit("pipeline", {"run": run_id})
+    if r["kind"] == "colab":
+        submit = False  # a Drive folder is never watched: a person runs it with colab/lang_bridge.ipynb
+    # prepared only (no job): someone runs the folder with the research runner (run_manifest)
+    job = project.queue(r["id"]).submit("pipeline", {"run": run_id}) if submit else f"{PREPARED}{run_id}"
     for owner_id in ([owner] if owner else [f"series:{s}" for s in sids]):
         db.run("INSERT OR REPLACE INTO jobs (id,project_id,stage,created,role,root) VALUES (?,?,?,?,?,?)",
                f"{job}" if owner_id == (owner or f"series:{sids[0]}") else f"{job}@{owner_id}", owner_id, "pipeline",
                time.time(), run_id, r["id"])
-    return {"run": run_id, "job": job, "root": r["id"], "videos": len(pids), "works": len(sids), "stages": stages}
+    return {"run": run_id, "job": None if job.startswith(PREPARED) else job, "dir": None if submit else str(d),
+            "root": r["id"], "videos": len(pids), "works": len(sids), "stages": stages}
+
+
+PREPARED = "prepared-"  # jobs-row id of a run that is only prepared (no queue job)
 
 
 def listing(owner: str) -> list[dict]:
@@ -121,11 +127,14 @@ def status(root_id: str, run_id: str, job_id: str | None = None) -> dict:
     try:
         man = json.loads((d / "manifest.json").read_text(encoding="utf-8"))
         state = json.loads((d / "state.json").read_text(encoding="utf-8")) if (d / "state.json").exists() else {}
-        st = project.queue(root_id).status(job_id) if job_id else {}
+        st = project.queue(root_id).status(job_id) if job_id and not job_id.startswith(PREPARED) else {}
         report = json.loads((d / "report.json").read_text(encoding="utf-8")) if (d / "report.json").exists() else None
     except (OSError, ValueError):
         return {"run": run_id, "root": root_id, "state": "unreachable"}
     srcs = state.get("sources", {})
+    if job_id and job_id.startswith(PREPARED):  # run by hand: only the folder tells how far it got
+        st = {"state": "done" if state.get("finished") else "running" if srcs else "prepared"}
+        job_id = None
     return {"run": run_id, "name": man.get("name"), "job": job_id, "root": root_id, "state": st.get("state"),
             "progress": st.get("progress"), "note": st.get("note"), "stages": man["stages"], "videos": len(man["sources"]),
             "works": len(man.get("works") or [1]),
