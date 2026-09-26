@@ -142,8 +142,8 @@ def render(pid: str, lang: str | None = None, update=lambda *a, **k: None) -> di
     takes |= recurring.origin_takes(sents, lang)
 
     update(0.05, "decoding stems")
-    background = decode(d / "background.flac")
-    vocals = decode(d / "vocals.flac")
+    background = decode(project.stem(pid, "background"))
+    vocals = decode(project.stem(pid, "vocals"))
     total = max(len(background), len(vocals)) / SR
     n = int(total * SR)
     background = np.pad(background, (0, n - len(background)))

@@ -118,9 +118,14 @@ def test_people_here_are_never_overwritten(team_a):
     _use(a["mp"], a["tmp"] / "b")
     a["started"].clear()
     rep = package.import_work(pkg, fetch=True)
-    # no media in the package: each source is fetched again from its origin (and nothing re-transcribed)
+    # no media in the package: with Colab active, a Colab batch fetches each video into
+    # Drive — nothing is downloaded on this PC, and nothing is re-transcribed
     assert sorted(rep["fetching"]) == sorted(rep["sources"]["added"])
-    assert sorted(a["started"]) == sorted((pid, "import") for pid in rep["sources"]["added"])
+    assert a["started"] == []
+    jobs = db.rows("SELECT * FROM jobs WHERE stage='bulk'")
+    assert len(jobs) == 1 and jobs[0]["root"] == "colab"
+    job = json.loads((project.queue("colab").layout.job_dir(jobs[0]["id"]) / "job.json").read_text(encoding="utf-8"))
+    assert job["params"]["steps"] == ["fetch"] and len(job["params"]["items"]) == 2
     pid = rep["sources"]["added"][0]
     project.set_translation(pid, 2, "am", "የኛ ትርጉም።", provenance="human")  # team B rewrites a machine line
     cast.update(a["host"], name="Neil (host)")

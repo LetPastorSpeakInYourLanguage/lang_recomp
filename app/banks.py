@@ -42,7 +42,7 @@ def candidates(uid: str) -> list[dict]:
     out = []
     for a in db.rows("SELECT a.source_id, a.label, p.uid AS source_uid FROM appearances a JOIN projects p ON p.id=a.source_id"
                      " WHERE a.character_uid=? AND a.status='confirmed'", uid):
-        if not (project.pdir(a["source_id"]) / "vocals.flac").exists():
+        if not project.stem(a["source_id"], "vocals").exists():
             continue
         for s in db.rows("SELECT id, start, end, text, reviewed FROM sentences WHERE project_id=? AND speaker=?",
                          a["source_id"], a["label"]):
@@ -91,7 +91,7 @@ def _add(uid: str, c: dict, role: str, manual: bool) -> None:
     path = _dir(uid) / f"{c['source_uid'][:12]}-{c['id']}.flac"
     if not path.exists():
         subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{c['start']:.3f}", "-to", f"{c['end']:.3f}",
-                        "-i", str(project.pdir(c["source_id"]) / "vocals.flac"), "-ac", "1", "-ar", str(SR), str(path)],
+                        "-i", str(project.stem(c["source_id"], "vocals")), "-ac", "1", "-ar", str(SR), str(path)],
                        check=True)
     db.run("INSERT OR REPLACE INTO cast_bank (character_uid,source_id,line_id,start,end,text,role,manual,path,added)"
            " VALUES (?,?,?,?,?,?,?,?,?,?)", uid, c["source_id"], c["id"], c["start"], c["end"], c["text"], role,

@@ -59,8 +59,14 @@ class DriveQueue:
         return f"jobs/{job_id}/out/{name}"
 
     def put_media(self, project: str, path: str | Path) -> str:
-        """Copy a file into the project's shared media folder; returns its root-relative path."""
+        """Copy a file into the project's shared media folder; returns its root-relative path.
+        A file already inside this job folder (e.g. a video a worker fetched into the
+        library on Drive) is referenced where it is, never copied through this PC."""
         path = Path(path)
+        try:
+            return path.resolve().relative_to(self.layout.root.resolve()).as_posix()
+        except ValueError:
+            pass
         dst = self.layout.projects / project / "media" / path.name
         dst.parent.mkdir(parents=True, exist_ok=True)
         if not dst.exists() or dst.stat().st_size != path.stat().st_size:
