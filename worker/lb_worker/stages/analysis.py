@@ -74,11 +74,22 @@ def patch_separator_download(log=print) -> None:
     """audio-separator streams model files straight to their final name and trusts
     any file that exists, so one dropped connection leaves a corrupt model behind.
     Route its downloads through the resumable fetch instead."""
+    import requests
     from audio_separator.separator import Separator
 
     from ..deps import fetch
 
-    Separator.download_file_if_not_exists = lambda self, url, output_path: fetch(url, output_path, log=log)
+    class Missing(requests.HTTPError, RuntimeError):
+        """A file the separator probes for is not at this URL. Newer audio-separator
+        (0.47) falls back to its other repo on RuntimeError, older ones on HTTPError."""
+
+    def download(self, url, output_path):
+        try:
+            return fetch(url, output_path, log=log)
+        except requests.HTTPError as e:
+            raise Missing(str(e), response=e.response) from None
+
+    Separator.download_file_if_not_exists = download
 
 
 def enable_xpu_for_separator(log=print) -> None:

@@ -35,3 +35,43 @@ def test_a_folder_is_dubbed_by_hand_and_the_app_opens_the_results(tmp_path, monk
     assert Path(db.meta(p)["exports"]["am"]["mp4"]).exists() and Path(project.get(p)["video"]).exists()
     assert mix.mix_dir(p, "am").is_relative_to(out / "library")
     db._local.c = None
+
+
+def test_a_missing_separator_file_lets_audio_separator_try_its_other_repo(monkeypatch):
+    """audio-separator 0.47 probes the UVR repo for a model's YAML and falls back to its
+    own repo only on RuntimeError; a 404 must not stop the voice stage (Colab, 2026-09-26)."""
+    import sys
+    import types
+
+    import requests
+
+    from lb_worker import deps
+    from lb_worker.stages import analysis
+
+    Separator = type("Separator", (), {})
+    fake = types.ModuleType("audio_separator.separator")
+    fake.Separator = Separator
+    monkeypatch.setitem(sys.modules, "audio_separator", types.ModuleType("audio_separator"))
+    monkeypatch.setitem(sys.modules, "audio_separator.separator", fake)
+
+    def not_there(url, dest, log=print, tries=5):
+        raise requests.HTTPError(f"HTTP 404 for {url}")
+
+    monkeypatch.setattr(deps, "fetch", not_there)
+    analysis.patch_separator_download()
+    for kind in (RuntimeError, requests.HTTPError):
+        try:
+            Separator().download_file_if_not_exists("https://x/model.yaml", "/tmp/model.yaml")
+        except kind:
+            pass
+        else:
+            raise AssertionError(f"no {kind.__name__}")
+
+
+def test_a_newer_run_in_the_same_notebook_stops_the_older_ones_threads(tmp_path):
+    from lb_worker import research
+
+    old = research._current["ctx"] = research._Ctx(tmp_path, "a", tmp_path)
+    assert not old.cancelled()
+    research._current["ctx"] = research._Ctx(tmp_path, "b", tmp_path)
+    assert old.cancelled()

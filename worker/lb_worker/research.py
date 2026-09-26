@@ -36,6 +36,7 @@ import time
 from pathlib import Path
 
 ALL = ["fetch", "transcribe", "translate", "voice", "mix"]
+_current: dict = {}  # the run in progress in this Python process
 
 
 class _Ctx:
@@ -55,7 +56,10 @@ class _Ctx:
         return self.worker._models[key]
 
     def log(self, msg: str) -> None:
-        print(msg, flush=True)
+        pass  # the runner prints its own progress
+
+    def stop(self) -> None:
+        self.stopped = True
 
     def set_progress(self, frac: float, note: str | None = None) -> None:
         self.progress = frac
@@ -64,7 +68,9 @@ class _Ctx:
         pass
 
     def cancelled(self) -> bool:
-        return False
+        # a run stopped by hand, or replaced by a newer one in the same notebook: its
+        # background download thread must not keep writing into the same folder
+        return getattr(self, "stopped", False) or _current.get("ctx") is not self
 
 
 def _repo_on_path() -> None:
@@ -99,7 +105,12 @@ def run_manifest(run_dir: str | Path, hf_token: str | None = None, cache: str | 
     root = run_dir.parent.parent
     _env(hf_token, Path(cache) if cache else root / "cache")
     t = time.time()
-    res = Run(_Ctx(root, run_dir.name, _scratch())).go()
+    ctx = _current["ctx"] = _Ctx(root, run_dir.name, _scratch())
+    try:
+        res = Run(ctx).go()
+    except BaseException:  # stopped (KeyboardInterrupt) or failed: stop its threads too
+        ctx.stop()
+        raise
     results = sorted((run_dir / "results").glob("*.lbwork"))
     print(f"\nDone in {(time.time() - t) / 60:.0f} min: {res['videos']} videos. To look at and listen to the results, "
           f"open this in the Lang-Bridge app (Home → Open a shared work):")
