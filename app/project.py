@@ -371,7 +371,6 @@ def sentences(pid: str, lang: str | None = None) -> list[dict]:
         s.pop("words", None)  # only merge/split need them; keep the list payload small
         for old in ("am", "am_locked"):
             s.pop(old, None)
-        s["chapter_break"] = s["chapter_head"]  # old name, until the web app uses chapter ids
         s["lang"] = lang
         s["tr"] = s["tr"] or ""
         s["tr_locked"] = s["tr_locked"] or 0
@@ -385,13 +384,16 @@ def sentences(pid: str, lang: str | None = None) -> list[dict]:
 
 # ---- translation -------------------------------------------------------------------------
 def translate(pid: str, lang: str | None = None, chapter: int | None = None, force: bool = False) -> str:
+    """Translate every chapter, or only the one with id ``chapter``."""
+    if chapter is not None and chapter not in {c["id"] for c in chaps.ensure(pid)}:
+        raise ValueError("no such chapter")
     return tasks.start(pid, "translate", _translate, pid, lang_or_primary(pid, lang), chapter, force)
 
 
 def _translate(pid: str, lang: str, chapter: int | None, force: bool, update) -> None:
     p = get(pid)
-    chs = [lines for _, lines in chaps.group(sentences(pid, lang), chaps.ensure(pid))]
-    todo = [chs[chapter]] if chapter is not None else chs
+    todo = [lines for c, lines in chaps.group(sentences(pid, lang), chaps.ensure(pid))
+            if chapter is None or c["id"] == chapter]
     tr = GoogleBatchTranslator(p["src_lang"], lang, context=2)
     for i, ch in enumerate(todo):
         update(i / len(todo), f"chapter {i + 1}/{len(todo)}")

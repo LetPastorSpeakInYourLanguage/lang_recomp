@@ -295,7 +295,6 @@ def sentences(pid: str, lang: str | None = None):
 class SentPatch(BaseModel):
     text: str | None = None
     speaker: str | None = None
-    chapter_break: bool | None = None
     reviewed: bool | None = None
     mode: str | None = None  # "dub" | "keep" | "auto" (back to the suggestion)
     # the translation into `lang` (default: the primary target language)
@@ -323,13 +322,6 @@ def patch_sentence(pid: str, sid: int, body: SentPatch):
         # A hand edit locks the line, so re-translating never overwrites it.
         locked = changes.pop("tr_locked", True if text is not None else None)
         project.set_translation(pid, sid, lang, text, locked, provenance="human")
-    if "chapter_break" in changes:  # old flag API: a chapter starts at this line or not
-        cur = next(x for x in project.sentences(pid, lang) if x["id"] == sid)
-        if bool(changes.pop("chapter_break")) != bool(cur["chapter_head"]):
-            try:
-                chapters.toggle(pid, sid)
-            except ValueError as e:
-                raise HTTPException(400, str(e))
     for k in LINE_FIELDS:
         if k in changes:
             v = changes[k]
@@ -359,8 +351,42 @@ def split_sentence(pid: str, sid: int, body: SplitReq):
         raise HTTPException(400, str(e))
 
 
+class ChapterAt(BaseModel):
+    at: int  # line id
+
+
+class ChapterPatch(BaseModel):
+    title: str
+
+
+@app.get("/api/projects/{pid}/chapters")
+def list_chapters(pid: str):
+    _p(pid)
+    return chapters.listing(pid)
+
+
+@app.post("/api/projects/{pid}/chapters/toggle")
+def toggle_chapter(pid: str, body: ChapterAt):
+    """Start a chapter at this line, or fold the chapter it opens into the previous one."""
+    _p(pid)
+    try:
+        return chapters.toggle(pid, body.at)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.patch("/api/projects/{pid}/chapters/{cid}")
+def rename_chapter(pid: str, cid: int, body: ChapterPatch):
+    _p(pid)
+    try:
+        chapters.rename(pid, cid, body.title)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    return next(c for c in chapters.listing(pid) if c["id"] == cid)
+
+
 class TranslateReq(BaseModel):
-    chapter: int | None = None
+    chapter: int | None = None  # chapter id; none = every chapter
     force: bool = False
     lang: str | None = None
 
@@ -370,7 +396,10 @@ def translate(pid: str, body: TranslateReq):
     _p(pid)
     if tasks.busy(pid, "translate"):
         raise HTTPException(409, "translation already running")
-    return {"task": project.translate(pid, body.lang, body.chapter, body.force)}
+    try:
+        return {"task": project.translate(pid, body.lang, body.chapter, body.force)}
+    except ValueError as e:
+        raise HTTPException(404, str(e))
 
 
 # ---- voice -------------------------------------------------------------------------------

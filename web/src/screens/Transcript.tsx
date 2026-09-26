@@ -1,6 +1,6 @@
 import { AlertTriangle, Check, FileText, Keyboard, Merge, Pause, Play, Scissors, Split } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, fmtTime, usePoll, type Character, type Project, type Sentence } from "../api";
+import { api, fmtTime, usePoll, type Chapter, type Character, type Project, type Sentence } from "../api";
 import { Empty, SpeakerDot, Tag } from "../ui";
 
 /** A line whose words drifted: Whisper dropped punctuation/capitals there, and the
@@ -10,6 +10,7 @@ const suspicious = (s: Sentence) => !/^[A-Z0-9"'(]/.test(s.text) || !/[.?!…]["
 export default function Transcript({ project, onChanged }: { project: Project; onChanged: () => void }) {
   const sents = usePoll(() => api.sentences(project.id), [project.id]);
   const chars = usePoll(() => api.characters(project.id), [project.id]);
+  const chaps = usePoll(() => api.chapters(project.id), [project.id]);
   const rows = sents.data ?? [];
   const cast = chars.data ?? [];
   const [sel, setSel] = useState(0);
@@ -20,6 +21,7 @@ export default function Transcript({ project, onChanged }: { project: Project; o
   const stopAt = useRef<number>(Infinity);
   const listRef = useRef<HTMLDivElement>(null);
   const byLabel = useMemo(() => Object.fromEntries(cast.map((c) => [c.label, c])), [cast]);
+  const chapterById = useMemo(() => Object.fromEntries((chaps.data ?? []).map((c) => [c.id, c])), [chaps.data]);
 
   const [note, setNote] = useState<string | null>(null);
 
@@ -28,7 +30,7 @@ export default function Transcript({ project, onChanged }: { project: Project; o
     const s = rows[i];
     if (!s || i + 1 >= rows.length) return;
     await api.mergeNext(project.id, s.id);
-    await sents.reload();
+    await Promise.all([sents.reload(), chaps.reload()]);
     setNote(`Merged line ${fmtTime(s.start)} with the next one. Its translation was cleared.`);
     onChanged();
   }
@@ -44,9 +46,27 @@ export default function Transcript({ project, onChanged }: { project: Project; o
     if (text.trim() !== s.text) await api.patchSentence(project.id, s.id, { text: text.trim() });
     await api.split(project.id, s.id, wordIndex);
     setEditing(null);
-    await sents.reload();
+    await Promise.all([sents.reload(), chaps.reload()]);
     setNote(`Split line ${fmtTime(s.start)} after word ${wordIndex}.`);
     onChanged();
+  }
+
+  /** Start a chapter at this line, or fold the chapter it opens into the one before. */
+  async function toggleChapter(s: Sentence) {
+    try {
+      const r = await api.toggleChapter(project.id, s.id);
+      await Promise.all([sents.reload(), chaps.reload()]);
+      setNote(r.added ? `New chapter from ${fmtTime(s.start)}.` : `Chapter removed; its lines joined the one before.`);
+      onChanged();
+    } catch (e) {
+      setNote((e as Error).message);
+    }
+  }
+
+  async function rename(c: Chapter, title: string) {
+    if (title.trim() === c.title) return;
+    await api.renameChapter(project.id, c.id, title);
+    await chaps.reload();
   }
 
   async function patch(s: Sentence, b: Parameters<typeof api.patchSentence>[2]) {
@@ -98,7 +118,7 @@ export default function Transcript({ project, onChanged }: { project: Project; o
       else if (k === "k" || e.key === "ArrowUp") { e.preventDefault(); setSel(Math.max(0, sel - 1)); }
       else if (e.key === " ") { e.preventDefault(); playLine(sel); }
       else if (e.key === "Enter") { e.preventDefault(); setEditing(s.id); }
-      else if (k === "c") void patch(s, { chapter_break: !s.chapter_break });
+      else if (k === "c") void toggleChapter(s);
       else if (k === "m") void mergeNext(sel);
       else if (k === "r") { void patch(s, { reviewed: !s.reviewed }); setSel(Math.min(rows.length - 1, sel + 1)); }
       else if (/^[1-9]$/.test(e.key) && cast[Number(e.key) - 1]) void patch(s, { speaker: cast[Number(e.key) - 1].label });
@@ -111,7 +131,6 @@ export default function Transcript({ project, onChanged }: { project: Project; o
     return <Empty icon={<FileText size={28} />} title="No transcript yet">Load the analysis results first (Analysis & jobs).</Empty>;
   }
 
-  let chapter = 1;
   const reviewed = rows.filter((r) => r.reviewed).length;
   return (
     <div className="flex-1 min-h-0 grid grid-cols-[minmax(320px,42%)_1fr] max-lg:grid-cols-1">
@@ -131,7 +150,7 @@ export default function Transcript({ project, onChanged }: { project: Project; o
             <span>Enter</span><span className="font-sans">edit text (Esc to leave)</span>
             <span>1–{Math.max(1, cast.length)}</span><span className="font-sans">set speaker: {cast.map((c, i) => `${i + 1} ${c.name}`).join(", ")}</span>
             <span>R</span><span className="font-sans">mark reviewed and move on</span>
-            <span>C</span><span className="font-sans">start a new chapter here (translation context stops at chapter breaks)</span>
+            <span>C</span><span className="font-sans">start a new chapter here, or remove the one this line starts (translation context stops at chapters)</span>
             <span>M</span><span className="font-sans">merge with the next line</span>
             <span>Ctrl+Enter</span><span className="font-sans">while editing: split the line at the cursor</span>
           </div>
@@ -141,14 +160,16 @@ export default function Transcript({ project, onChanged }: { project: Project; o
       <div ref={listRef} className="overflow-y-auto min-h-0 p-14 flex flex-col gap-0">
         {rows.map((s, i) => {
           const c = s.speaker ? byLabel[s.speaker] : undefined;
-          const head = i === 0 || !!s.chapter_break;
+          const head = i === 0 || !!s.chapter_head;
+          const ch = chapterById[s.chapter];
           const on = i === sel;
           return (
             <div key={s.id} data-i={i}>
               {head && (
                 <div className="flex items-center gap-8 pt-10 pb-5">
                   <Scissors size={11} className="text-faint" />
-                  <span className="label">Chapter {chapter++}</span>
+                  <span className="label">Chapter {ch ? ch.index + 1 : ""}</span>
+                  {ch && <ChapterTitle key={`${ch.id}:${ch.title}`} chapter={ch} onSave={(t) => void rename(ch, t)} />}
                   <div className="flex-1 h-px bg-border" />
                 </div>
               )}
@@ -203,5 +224,16 @@ function SpeakerPick({ value, cast, current, onChange }: { value: string | null;
       </select>
       {current && current.gender && <Tag>{current.gender[0].toUpperCase()}</Tag>}
     </label>
+  );
+}
+
+
+/** A chapter's name, edited in place; saved when the field loses focus or on Enter. */
+function ChapterTitle({ chapter, onSave }: { chapter: Chapter; onSave: (title: string) => void }) {
+  const [v, setV] = useState(chapter.title);
+  return (
+    <input value={v} onChange={(e) => setV(e.target.value)} onBlur={() => onSave(v)} placeholder="name this chapter"
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Escape") (e.target as HTMLInputElement).blur(); }}
+      className="bg-transparent border-0 border-b border-transparent hover:border-border2 focus:border-accent outline-none text-11 text-text px-2 py-1 min-w-0 w-[220px] placeholder:text-faint" />
   );
 }

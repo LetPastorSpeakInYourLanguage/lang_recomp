@@ -98,6 +98,11 @@ def test_translation_context_stops_at_chapters(fresh, monkeypatch):
     monkeypatch.setattr(project, "GoogleBatchTranslator", Fake)
     project._translate(pid, "am", None, False, lambda *a: None)
     assert batches == [[1, 2], [3, 4]]
+    batches.clear()
+    project._translate(pid, "am", 1, False, lambda *a: None)  # one chapter, by id
+    assert batches == [[1, 2]]
+    with pytest.raises(ValueError):
+        project.translate(pid, "am", 99)
 
 
 def test_old_chapter_flags_become_chapters_once(fresh):

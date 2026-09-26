@@ -55,10 +55,14 @@ export interface Sentence {
   id: number; speaker: string | null; start: number; end: number; slot_s: number; text: string;
   /** translation into `lang` */
   lang: string; tr: string; tr_locked: number; tr_provenance: "machine" | "human" | "reviewed" | null;
-  chapter_break: number; reviewed: number; budget: Budget | null;
+  /** id of the chapter holding the line; `chapter_head` marks the first line of a later chapter */
+  chapter: number; chapter_head: number; reviewed: number; budget: Budget | null;
   /** effective: the person's choice, else the interjection suggestion */
   mode: "dub" | "keep"; mode_set: "dub" | "keep" | null; mode_suggested: "dub" | "keep";
 }
+
+/** Runs from `start` to the next chapter's start; the first opens the clip. */
+export interface Chapter { id: number; index: number; title: string; start: number; end: number; lines: number }
 
 async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
   const r = await fetch(url, {
@@ -97,9 +101,13 @@ export const api = {
   merge: (p: string, source: string, into: string) => req("POST", `/api/projects/${p}/characters/merge`, { source, into }),
   sentences: (p: string, lang?: string) =>
     req<Sentence[]>("GET", `/api/projects/${p}/sentences${lang ? `?lang=${encodeURIComponent(lang)}` : ""}`),
-  patchSentence: (p: string, id: number, b: Partial<{ text: string; speaker: string; lang: string; tr: string; tr_locked: boolean; chapter_break: boolean; reviewed: boolean;
+  patchSentence: (p: string, id: number, b: Partial<{ text: string; speaker: string; lang: string; tr: string; tr_locked: boolean; reviewed: boolean;
     mode: "dub" | "keep" | "auto" }>) =>
     req<Sentence>("PATCH", `/api/projects/${p}/sentences/${id}`, b),
+  chapters: (p: string) => req<Chapter[]>("GET", `/api/projects/${p}/chapters`),
+  toggleChapter: (p: string, at: number) =>
+    req<{ added?: number; removed?: number }>("POST", `/api/projects/${p}/chapters/toggle`, { at }),
+  renameChapter: (p: string, id: number, title: string) => req<Chapter>("PATCH", `/api/projects/${p}/chapters/${id}`, { title }),
   mergeNext: (p: string, id: number) => req<{ kept: number; removed: number }>("POST", `/api/projects/${p}/sentences/${id}/merge_next`),
   split: (p: string, id: number, word_index: number) =>
     req<{ first: number; second: number }>("POST", `/api/projects/${p}/sentences/${id}/split`, { word_index }),
@@ -117,6 +125,7 @@ export const api = {
     `/api/projects/${p}/mix/audio/${name}?lang=${encodeURIComponent(lang)}&v=${v ?? 0}`,
   languages: () => req<{ code: string; name: string; iso3: string; script: string }[]>("GET", "/api/languages"),
   addLanguage: (p: string, lang: string) => req<{ targets: string[] }>("POST", `/api/projects/${p}/languages`, { lang }),
+  /** `chapter` is a chapter id; omitted = every chapter */
   translate: (p: string, lang: string, chapter?: number, force = false) =>
     req<{ task: string }>("POST", `/api/projects/${p}/translate`, { chapter, force, lang }),
   media: (p: string, name: "video" | "audio" | "vocals" | "background") => `/api/projects/${p}/media/${name}`,
