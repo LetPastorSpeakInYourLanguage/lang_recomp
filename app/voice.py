@@ -10,7 +10,7 @@ import shutil
 import statistics
 import time
 
-from . import db, langs, project, settings
+from . import banks, cast, db, langs, project, settings
 from .translate.length import syllables
 
 ENGINE = {"model": "k2-fsa/OmniVoice", "steps": 16, "speed": 1.4, "takes": 2}
@@ -24,10 +24,12 @@ def _clean(text: str) -> bool:
     return text[:1].isupper() and text.rstrip()[-1:] in ".?!"
 
 
-def characters_plan(pid: str) -> dict:
-    """Per important character: ~10 s of their longest clean lines as the voice
-    sample (timbre), and other lines held out to judge likeness fairly."""
-    chars = {c["label"]: c for c in db.rows("SELECT * FROM characters WHERE project_id=?", pid)}
+def characters_plan(pid: str, dest=None) -> dict:
+    """Per important character speaking in this source: the character's voice bank
+    (its lines from every episode it is confirmed in, see app/banks.py) and held-out
+    lines, written as files to ``dest`` for the job; plus, as before, ~10 s of this
+    source's own clean lines as spans, which workers from before banks still use."""
+    chars = cast.labels_of(pid)
     by: dict[str, list[dict]] = {}
     for s in project.sentences(pid):
         if s["speaker"] in chars and chars[s["speaker"]]["important"]:
@@ -49,6 +51,11 @@ def characters_plan(pid: str) -> dict:
         out[spk] = {"bank": [[s["start"], s["end"]] for s in bank],
                     "bank_text": " ".join(s["text"] for s in bank),
                     "heldout": [[s["start"], s["end"]] for s in held]}
+        if dest is not None:
+            entry = banks.job_files(chars[spk]["uid"], spk, dest)
+            if entry:
+                out[spk] |= {k: entry[k] for k in ("bank_file", "bank_text", "heldout_files", "sources")}
+                out[spk]["_files"] = entry["files"]
     return out
 
 
@@ -61,7 +68,9 @@ def queue(pid: str, root_id: str | None = None, ids: list[int] | None = None, ta
     vocals = project.pdir(pid) / "vocals.flac"
     if not vocals.exists():
         raise RuntimeError("no vocal stem yet: load the analysis results first")
-    chars = characters_plan(pid)
+    dest = project.pdir(pid) / "voice_banks"
+    chars = characters_plan(pid, dest)
+    bank_files = [f for c in chars.values() for f in c.pop("_files", [])]
     lines = [s for s in project.sentences(pid, lang) if s["tr"] and s["mode"] == "dub" and s["speaker"] in chars
              and not s["linked"] and (not ids or s["id"] in ids)]  # a recurring part is voiced at its origin
     if not lines:
@@ -75,7 +84,7 @@ def queue(pid: str, root_id: str | None = None, ids: list[int] | None = None, ta
                        "end": s["end"], "slot_s": s["slot_s"]} for s in lines]}
     path = project.pdir(pid) / "voice_plan.json"
     path.write_text(json.dumps(plan, ensure_ascii=False, indent=1), encoding="utf-8")
-    job = q.submit("voice", {"project": pid, "lang": lang}, files=[path], shared=[q.put_media(pid, vocals)])
+    job = q.submit("voice", {"project": pid, "lang": lang}, files=[path, *bank_files], shared=[q.put_media(pid, vocals)])
     project.record_job(pid, job, "voice", role="voice", root=r["id"])
     return {"job": job, "lines": len(lines), "root": r["id"], "lang": lang}
 

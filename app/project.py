@@ -11,7 +11,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from . import chapters as chaps, db, settings, tasks
+from . import cast, chapters as chaps, db, settings, tasks
 from .jobs.drive_queue import DriveQueue
 from .translate.google_batch import GoogleBatchTranslator
 from .translate.length import budget
@@ -37,6 +37,18 @@ def pdir(pid: str) -> Path:
     return d
 
 
+def single_work(pid: str) -> str:
+    """Give a project its own hidden single-source work (a standalone video): the work
+    holds its cast and clips, and is what travels when it is shared."""
+    p = get(pid)
+    sid = db._free_series_id(db.conn(), pid)
+    db.run("INSERT INTO series (id,name,kind,src_lang,targets,settings,created,uid) VALUES (?,?,'single',?,?,'{}',?,?)",
+           sid, p["name"], p["src_lang"], json.dumps(targets(pid)), time.time(), db.new_uid())
+    db.run("UPDATE projects SET series_id=?, position=1 WHERE id=?", sid, pid)
+    db.run("UPDATE clips SET series_id=? WHERE source_id=?", sid, pid)
+    return sid
+
+
 def slug(name: str) -> str:
     s = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:40] or "project"
     base, n = s, 2
@@ -50,18 +62,21 @@ def create(name: str, source: str, clip_start: float | None, clip_end: float | N
            max_speakers: int | None, src_lang: str = "en", tgt_lang: str = "am",
            extra_targets: list[str] | tuple = (), series: dict | None = None) -> dict:
     """A new project (a source), imported and analysed in the background. ``series``
-    places it in a series: {series_id, position, origin_id, published}."""
+    places it in a series: {series_id, position, origin_id, published}; without one it
+    gets its own single-source work (a standalone video)."""
     for lang in (src_lang, tgt_lang, *extra_targets):
         check_lang(lang)
     pid = slug(name)
     se = series or {}
     db.run("INSERT INTO projects (id,name,source,src_lang,tgt_lang,max_speakers,clip_start,clip_end,created,"
-           "series_id,position,origin_id,published) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+           "series_id,position,origin_id,published,uid) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
            pid, name, source, src_lang, tgt_lang, max_speakers, clip_start, clip_end, time.time(),
-           se.get("series_id"), se.get("position"), se.get("origin_id"), se.get("published"))
+           se.get("series_id"), se.get("position"), se.get("origin_id"), se.get("published"), db.new_uid())
     extra = [t for t in extra_targets if t not in (tgt_lang, src_lang)]
     if extra:
         db.set_meta(pid, targets=extra)
+    if not se.get("series_id"):
+        single_work(pid)
     tasks.start(pid, "import", _import, pid, serial="import")  # downloads queue up, one at a time
     return get(pid)
 
@@ -75,11 +90,21 @@ def _import(pid: str, update) -> None:
         update(0.05, "downloading with yt-dlp")
         cmd = ["yt-dlp", "--js-runtimes", "node", "-f", "bv*[height<=720]+ba/b[height<=720]",
                "--merge-output-format", "mp4", "--write-auto-subs", "--sub-langs", p["src_lang"],
-               "--sub-format", "vtt", "-o", str(d / "clip.%(ext)s")]
+               "--sub-format", "vtt", "-o", str(d / "clip.%(ext)s"), "--retries", "10", "--fragment-retries", "10",
+               # a clip range downloads through ffmpeg: let it reconnect on a flaky link
+               "--downloader-args", "ffmpeg_i:-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 30"]
         if p["clip_start"] is not None or p["clip_end"] is not None:
             cmd += ["--download-sections", f"*{p['clip_start'] or 0}-{p['clip_end'] or 'inf'}",
                     "--force-keyframes-at-cuts"]
-        _run(cmd + ["--", src])
+        for attempt in range(1, 4):  # a dropped connection mid-download is common here; try again
+            try:
+                _run(cmd + ["--", src])
+                break
+            except RuntimeError:
+                if attempt == 3:
+                    raise
+                update(0.05, f"download failed, retrying ({attempt + 1}/3)")
+                time.sleep(5 * attempt)
     else:
         update(0.05, "copying local file")
         path = Path(src)
@@ -103,6 +128,14 @@ def _import(pid: str, update) -> None:
         update(None, f"fingerprint skipped: {e}")
     update(0.85, f"sending audio to {settings.root()['name']}")
     analyze(pid)
+
+
+def retry_import(pid: str) -> str:
+    """Run a failed (or interrupted) import again: download, audio, analysis."""
+    get(pid)
+    if tasks.busy(pid, "import"):
+        raise ValueError("this video is already being imported")
+    return tasks.start(pid, "import", _import, pid, serial="import")
 
 
 def _run(cmd: list[str]) -> None:
@@ -226,15 +259,11 @@ def ingest(pid: str) -> dict:
     talk: dict[str, float] = {}
     for t in dia["exclusive"]:
         talk[t["speaker"]] = talk.get(t["speaker"], 0) + t["end"] - t["start"]
-    existing = {c["label"]: c for c in db.rows("SELECT * FROM characters WHERE project_id=?", pid)}
-    for i, label in enumerate(sorted(talk)):
-        if label in existing:
-            db.run("UPDATE characters SET talk_s=? WHERE project_id=? AND label=?", talk[label], pid, label)
-        else:
-            db.run("INSERT INTO characters (project_id,label,name,gender,important,color,talk_s)"
-                   " VALUES (?,?,?,?,1,?,?)", pid, label, f"Speaker {i + 1}", None, i % PALETTE, talk[label])
+    # each voice becomes an appearance of a work character: a close match to one the work
+    # already has is proposed for a person to confirm, otherwise a new character
+    linked = cast.ensure_for_source(pid, talk)
     db.set_meta(pid, ingested_at=time.time())
-    return {"sentences": len(sents), "characters": len(talk), "carried_over": len(kept)}
+    return {"sentences": len(sents), "characters": len(talk), "carried_over": len(kept), "cast": linked}
 
 
 def keep_reviewed(old: list[dict], new: list[dict], max_overlap: float = 0.3) -> tuple[list[dict], list[dict]]:
@@ -352,6 +381,8 @@ def summary(pid: str) -> dict:
     p = get(pid)
     n = db.row("SELECT COUNT(*) n, SUM(reviewed) rv FROM sentences WHERE project_id=?", pid)
     p["targets"] = targets(pid)
+    w = db.row("SELECT kind FROM series WHERE id=?", p["series_id"]) if p.get("series_id") else None
+    p["standalone"] = not w or w["kind"] == "single"  # its own hidden work, not a series
     # translated = has words in that language, own or (linked lines) the recurring part's
     per_lang, kept_lines, linked = {}, 0, 0
     for t in p["targets"]:
@@ -360,7 +391,7 @@ def summary(pid: str) -> dict:
         if t == p["tgt_lang"]:
             kept_lines = sum(1 for s in ss if s["mode"] == "keep")
             linked = sum(1 for s in ss if s["linked"])
-    chars = db.rows("SELECT * FROM characters WHERE project_id=?", pid)
+    chars = cast.for_source(pid)
     js = jobs(pid)
     analysis = {s: next((j["state"] for j in js if j["stage"] == s), None) for s in ANALYSIS}
     p["counts"] = {"sentences": n["n"] or 0, "translated": per_lang.get(p["tgt_lang"], 0),

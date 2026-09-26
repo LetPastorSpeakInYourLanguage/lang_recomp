@@ -8,6 +8,8 @@ import json
 import os
 import sqlite3
 import threading
+import time
+import uuid
 from pathlib import Path
 
 DATA = Path(os.environ.get("LANGBRIDGE_DATA", Path(__file__).resolve().parents[1] / "data"))
@@ -74,6 +76,28 @@ CREATE TABLE IF NOT EXISTS collection_items (
 CREATE TABLE IF NOT EXISTS clip_occurrences (
   id INTEGER PRIMARY KEY AUTOINCREMENT, clip_id INTEGER, source_id TEXT, start REAL, end REAL,
   score REAL, status TEXT DEFAULT 'proposed', updated REAL
+);
+-- The cast belongs to a work, not a video (app/cast.py). An appearance says which
+-- character a source's diarizer label is; 'proposed' until a person confirms a voice match.
+CREATE TABLE IF NOT EXISTS cast (
+  uid TEXT PRIMARY KEY, series_id TEXT, name TEXT NOT NULL, gender TEXT, role TEXT DEFAULT '',
+  notes TEXT DEFAULT '', color INTEGER DEFAULT 0, important INTEGER DEFAULT 1, auto INTEGER DEFAULT 0,
+  created REAL, updated REAL
+);
+CREATE TABLE IF NOT EXISTS cast_names (
+  character_uid TEXT, lang TEXT, name TEXT, PRIMARY KEY (character_uid, lang)
+);
+CREATE TABLE IF NOT EXISTS appearances (
+  source_id TEXT, label TEXT, character_uid TEXT, score REAL, status TEXT DEFAULT 'confirmed',
+  talk_s REAL DEFAULT 0, updated REAL, PRIMARY KEY (source_id, label)
+);
+-- A character's voice bank (app/banks.py): lines cut from its confirmed appearances'
+-- vocal stems into files under the work. role bank | heldout | excluded; manual = a
+-- person's choice, kept when the bank is rebuilt.
+CREATE TABLE IF NOT EXISTS cast_bank (
+  character_uid TEXT, source_id TEXT, line_id INTEGER, start REAL, end REAL, text TEXT,
+  role TEXT DEFAULT 'bank', manual INTEGER DEFAULT 0, path TEXT, added REAL,
+  PRIMARY KEY (character_uid, source_id, line_id)
 );
 CREATE TABLE IF NOT EXISTS takes (
   project_id TEXT, sentence_id INTEGER, job_id TEXT, take INTEGER, path TEXT, text TEXT,
@@ -142,7 +166,56 @@ def _migrate(c: sqlite3.Connection) -> None:
             c.executemany("INSERT INTO chapters (project_id,id,start,title,updated) VALUES (?,?,?,'',strftime('%s','now'))",
                           [(pid, i, st) for i, st in enumerate([0.0, *starts], 1)])
         c.execute("UPDATE sentences SET chapter_break=0 WHERE chapter_break<>0")
+    _migrate_works(c)
     c.commit()
+
+
+def new_uid() -> str:
+    """A portable identity: it never changes here and travels with a work to other teams."""
+    return uuid.uuid4().hex
+
+
+def _migrate_works(c: sqlite3.Connection) -> None:
+    """Every source belongs to a work (a series); a standalone video gets a hidden
+    single-source work of kind 'single'. Portable rows get a uid. Both run once:
+    they only touch rows that lack them."""
+    for table in ("series", "projects", "clips", "collections"):
+        if "uid" not in {r[1] for r in c.execute(f"PRAGMA table_info({table})")}:
+            c.execute(f"ALTER TABLE {table} ADD COLUMN uid TEXT")
+    if "rights" not in {r[1] for r in c.execute("PRAGMA table_info(series)")}:
+        c.execute("ALTER TABLE series ADD COLUMN rights TEXT DEFAULT ''")
+    for pid, name, src, tgt, meta, created in c.execute(
+            "SELECT id, name, src_lang, tgt_lang, meta, created FROM projects WHERE series_id IS NULL").fetchall():
+        extra = (json.loads(meta or "{}").get("targets") or [])
+        sid = _free_series_id(c, pid)
+        c.execute("INSERT INTO series (id,name,kind,src_lang,targets,settings,created) VALUES (?,?,'single',?,?,'{}',?)",
+                  (sid, name, src or "en", json.dumps([tgt or "am", *[t for t in extra if t != tgt]]), created or time.time()))
+        c.execute("UPDATE projects SET series_id=?, position=1 WHERE id=?", (sid, pid))
+        c.execute("UPDATE clips SET series_id=? WHERE source_id=? AND series_id IS NULL", (sid, pid))
+    for table, key in (("series", "id"), ("projects", "id"), ("clips", "id"), ("collections", "id")):
+        for (k,) in c.execute(f"SELECT {key} FROM {table} WHERE uid IS NULL").fetchall():
+            c.execute(f"UPDATE {table} SET uid=? WHERE {key}=?", (new_uid(), k))
+    # Characters used to be diarizer labels inside one project. Each becomes a character
+    # of the project's work with a confirmed appearance, once (labels without one).
+    for pid, label, name, gender, important, color, talk in c.execute(
+            "SELECT ch.project_id, ch.label, ch.name, ch.gender, ch.important, ch.color, ch.talk_s FROM characters ch"
+            " JOIN projects p ON p.id=ch.project_id WHERE NOT EXISTS (SELECT 1 FROM appearances a"
+            " WHERE a.source_id=ch.project_id AND a.label=ch.label)").fetchall():
+        sid = c.execute("SELECT series_id FROM projects WHERE id=?", (pid,)).fetchone()[0]
+        uid = new_uid()
+        auto = int(not gender and (name or "").startswith("Speaker "))  # untouched by a person
+        c.execute("INSERT INTO cast (uid,series_id,name,gender,important,color,auto,created,updated)"
+                  " VALUES (?,?,?,?,?,?,?,?,?)", (uid, sid, name or label, gender, important if important is not None else 1,
+                                                 color or 0, auto, time.time(), time.time()))
+        c.execute("INSERT INTO appearances (source_id,label,character_uid,status,talk_s,updated)"
+                  " VALUES (?,?,?,'confirmed',?,?)", (pid, label, uid, talk or 0, time.time()))
+
+
+def _free_series_id(c: sqlite3.Connection, base: str) -> str:
+    sid, n = base, 2
+    while c.execute("SELECT 1 FROM series WHERE id=?", (sid,)).fetchone():
+        sid, n = f"{base}-{n}", n + 1
+    return sid
 
 
 def rows(sql: str, *args) -> list[dict]:

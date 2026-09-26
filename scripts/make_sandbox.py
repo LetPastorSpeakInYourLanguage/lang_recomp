@@ -45,7 +45,7 @@ def main() -> None:
     DATA.mkdir(parents=True)
     os.environ["LANGBRIDGE_DATA"] = str(DATA)
     sys.path.insert(0, str(ROOT))
-    from app import db, project, series, tasks
+    from app import cast, db, project, series, tasks
 
     tasks.start = lambda *a, **k: "sandbox"  # no import/download: audio is written below
     s = series.create("Sandbox show", "show", "en", ["am", "om"])
@@ -70,8 +70,12 @@ def main() -> None:
         for n, (a, b, t) in enumerate(lines, 1):
             db.run("INSERT INTO sentences (project_id,id,speaker,start,end,text) VALUES (?,?,?,?,?,?)",
                    p["id"], n, "SPEAKER_00", a, b, t)
-        db.run("INSERT INTO characters (project_id,label,name,important,color) VALUES (?,?,?,1,0)",
-               p["id"], "SPEAKER_00", "Host")
+        cast.ensure_for_source(p["id"], {"SPEAKER_00": 30.0})  # no voice centroids here: a character per episode
+        if k == 0:
+            host = cast.for_source(p["id"])[0]["uid"]
+            cast.update(host, name="Host", gender="female")
+        else:  # the same host, linked by hand
+            cast.link(p["id"], "SPEAKER_00", host)
         if k == 0:  # the intro line, dubbed once at the origin
             project.set_translation(p["id"], 2, "am", "ይህ የሳንድቦክስ ትርኢት ነው።")
             t = np.arange(int(2.5 * SR)) / SR

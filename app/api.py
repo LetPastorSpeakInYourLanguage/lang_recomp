@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import aligners, chapters, db, feeds, langs, library, mix, project, recurring, series, settings, tasks, voice
+from . import aligners, banks, cast, chapters, db, feeds, langs, library, mix, project, recurring, series, settings, tasks, voice
 
 app = FastAPI(title="Lang-Bridge")
 WEB = Path(__file__).resolve().parents[1] / "web" / "dist"
@@ -160,7 +160,7 @@ class NewSource(BaseModel):
 
 @app.get("/api/series/kinds")
 def series_kinds():
-    return [{"kind": k, "label": v[0], "unit": v[1]} for k, v in series.KINDS.items()]
+    return [{"kind": k, "label": v[0], "unit": v[1]} for k, v in series.KINDS.items() if k != "single"]
 
 
 @app.get("/api/series")
@@ -493,6 +493,16 @@ def attach_project(pid: str, body: Attach):
     return series.attach(pid, body.series_id)
 
 
+@app.post("/api/projects/{pid}/import")
+def retry_import(pid: str):
+    """Try a failed download/import again."""
+    _p(pid)
+    try:
+        return {"task": project.retry_import(pid)}
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+
+
 @app.get("/api/projects/{pid}")
 def get_project(pid: str):
     _p(pid)
@@ -581,7 +591,9 @@ def _energy(pid: str) -> np.ndarray | None:
 @app.get("/api/projects/{pid}/characters")
 def characters(pid: str):
     _p(pid)
-    chars = db.rows("SELECT * FROM characters WHERE project_id=? ORDER BY talk_s DESC", pid)
+    chars = cast.for_source(pid)
+    for c in chars:  # a proposed link shows who the voice sounds like, and the other options
+        c["matches"] = cast.matches(pid, c["label"])[:4]
     sents = project.sentences(pid)
     rms = _energy(pid)
     for c in chars:
@@ -612,14 +624,146 @@ class CharPatch(BaseModel):
     name: str | None = None
     gender: str | None = None
     important: bool | None = None
+    role: str | None = None
+    notes: str | None = None
 
 
 @app.patch("/api/projects/{pid}/characters/{label}")
 def patch_character(pid: str, label: str, body: CharPatch):
-    for k, v in body.model_dump(exclude_none=True).items():
-        db.run(f"UPDATE characters SET {k}=? WHERE project_id=? AND label=?", int(v) if isinstance(v, bool) else v,
-               pid, label)
-    return db.row("SELECT * FROM characters WHERE project_id=? AND label=?", pid, label)
+    """Edits the character this voice is: the change holds in every source it appears in."""
+    c = cast.character_of(pid, label)
+    if not c:
+        raise HTTPException(404, "no such speaker")
+    return cast.update(c["uid"], **body.model_dump(exclude_none=True))
+
+
+class LinkReq(BaseModel):
+    character_uid: str | None = None  # none = a character of its own
+
+
+def _rebank(*uids: str | None) -> None:
+    """A character's episodes changed: its voice bank follows (new lines cut, old dropped)."""
+    for uid in {u for u in uids if u}:
+        try:
+            banks.rebuild(uid)
+        except (KeyError, OSError, subprocess.CalledProcessError):
+            pass  # a bank is rebuilt on demand when voicing too
+
+
+@app.post("/api/projects/{pid}/characters/{label}/confirm")
+def confirm_character(pid: str, label: str):
+    try:
+        a = cast.confirm(pid, label)
+    except KeyError:
+        raise HTTPException(404, "no such speaker")
+    _rebank(a["character_uid"])
+    return a
+
+
+@app.post("/api/projects/{pid}/characters/{label}/link")
+def link_character(pid: str, label: str, body: LinkReq):
+    """Say who this voice is: a character of the work, or (none) a character of its own."""
+    before = cast.character_of(pid, label)
+    try:
+        a = cast.link(pid, label, body.character_uid) if body.character_uid else cast.detach(pid, label)
+    except KeyError:
+        raise HTTPException(404, "no such speaker or character")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    _rebank(a["character_uid"], before and db.row("SELECT uid FROM cast WHERE uid=?", before["uid"]) and before["uid"])
+    return a
+
+
+@app.get("/api/series/{sid}/cast")
+def work_cast(sid: str):
+    _s(sid)
+    return cast.of_work(sid)
+
+
+@app.patch("/api/cast/{uid}")
+def patch_cast(uid: str, body: CharPatch):
+    try:
+        return cast.update(uid, **body.model_dump(exclude_none=True))
+    except KeyError:
+        raise HTTPException(404, "no such character")
+
+
+class CastName(BaseModel):
+    name: str
+
+
+@app.put("/api/cast/{uid}/names/{lang}")
+def cast_name(uid: str, lang: str, body: CastName):
+    try:
+        return cast.set_name(uid, project.check_lang(lang), body.name)
+    except KeyError:
+        raise HTTPException(404, "no such character")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+class CastMerge(BaseModel):
+    into: str
+
+
+@app.post("/api/cast/{uid}/merge")
+def merge_cast(uid: str, body: CastMerge):
+    """Two characters of a work are one person."""
+    try:
+        c = cast.merge(uid, body.into)
+    except KeyError:
+        raise HTTPException(404, "no such character")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    db.run("DELETE FROM cast_bank WHERE character_uid=?", uid)
+    _rebank(body.into)
+    return c
+
+
+@app.get("/api/cast/{uid}/bank")
+def cast_bank(uid: str):
+    """The character's voice bank, held-out and excluded lines, and the lines it could use."""
+    try:
+        cast.get(uid)
+    except KeyError:
+        raise HTTPException(404, "no such character")
+    names = {r["id"]: r["name"] for r in db.rows("SELECT id, name FROM projects")}
+    used = {(r["source_id"], r["line_id"]) for r in banks.rows(uid)}
+    return {"rows": [r | {"source_name": names.get(r["source_id"])} for r in banks.rows(uid)],
+            "candidates": [c | {"source_name": names.get(c["source_id"])} for c in banks.candidates(uid)
+                           if (c["source_id"], c["id"]) not in used]}
+
+
+@app.post("/api/cast/{uid}/bank/rebuild")
+def rebuild_bank(uid: str):
+    try:
+        return banks.rebuild(uid)
+    except KeyError:
+        raise HTTPException(404, "no such character")
+
+
+class BankPin(BaseModel):
+    source_id: str
+    line_id: int
+    role: str = "bank"  # bank | heldout | excluded
+
+
+@app.put("/api/cast/{uid}/bank")
+def pin_bank(uid: str, body: BankPin):
+    try:
+        return banks.pin(uid, body.source_id, body.line_id, body.role)
+    except KeyError:
+        raise HTTPException(404, "no such character")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/cast/{uid}/bank/{source_id}/{line_id}")
+def bank_audio(uid: str, source_id: str, line_id: int):
+    r = db.row("SELECT path FROM cast_bank WHERE character_uid=? AND source_id=? AND line_id=?", uid, source_id, line_id)
+    if not r or not Path(r["path"]).exists():
+        raise HTTPException(404, "not in the bank")
+    return FileResponse(r["path"])
 
 
 class Merge(BaseModel):
@@ -629,14 +773,13 @@ class Merge(BaseModel):
 
 @app.post("/api/projects/{pid}/characters/merge")
 def merge_characters(pid: str, body: Merge):
-    """Two clusters are one person: move every line and add up talk time."""
-    a = db.row("SELECT * FROM characters WHERE project_id=? AND label=?", pid, body.source)
-    b = db.row("SELECT * FROM characters WHERE project_id=? AND label=?", pid, body.into)
-    if not a or not b or a == b:
+    """Two clusters are one voice in this source: move every line and add up talk time."""
+    if body.source == body.into:
         raise HTTPException(400, "bad merge")
-    db.run("UPDATE sentences SET speaker=? WHERE project_id=? AND speaker=?", body.into, pid, body.source)
-    db.run("UPDATE characters SET talk_s=talk_s+? WHERE project_id=? AND label=?", a["talk_s"], pid, body.into)
-    db.run("DELETE FROM characters WHERE project_id=? AND label=?", pid, body.source)
+    try:
+        cast.merge_labels(pid, body.source, body.into)
+    except KeyError:
+        raise HTTPException(400, "bad merge")
     return {"ok": True}
 
 

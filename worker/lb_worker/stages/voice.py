@@ -2,7 +2,10 @@
 
 Inputs: vocals.flac (the separated voice stem) and voice_plan.json:
   {"engine": {"model", "steps", "speed", "takes", "lang", "language", "asr"},
-   "characters": {label: {"bank": [[s, e], ...], "bank_text": str, "heldout": [[s, e], ...]}},
+   "characters": {label: {"bank": [[s, e], ...], "bank_text": str, "heldout": [[s, e], ...],
+                          "bank_file": "bank_<label>.wav", "heldout_files": [...]}},
+   (bank_file/heldout_files: the character's bank from every episode it is in, shipped
+    with the job; the spans cut this job's vocals.flac, for plans from before banks)
    "lines": [{"id", "speaker", "text", "start", "end", "slot_s"}]}   ("am" in older plans)
 
 Takes are written straight into the job folder's out/takes/, each renamed into place
@@ -44,6 +47,10 @@ def voice(ctx) -> dict:
 
     bank, heldout = {}, {}
     for spk, c in plan["characters"].items():
+        if c.get("bank_file"):  # the character's own bank, built by the app from all its episodes
+            bank[spk] = ctx.input(c["bank_file"])
+            heldout[spk] = [str(ctx.input(f)) for f in c.get("heldout_files") or [c["bank_file"]]]
+            continue
         gap = np.zeros(int(0.25 * sr), dtype=np.float32)
         bank[spk] = clips / f"bank_{spk}.wav"
         sf.write(bank[spk], np.concatenate([np.concatenate([cut(s, e), gap]) for s, e in c["bank"]]), sr)

@@ -51,6 +51,12 @@ def separate(ctx) -> dict:
         return s
 
     sep = ctx.model(f"separator:{model_name}", load)
+    # The loaded model is reused across jobs, but its output folder was fixed when it was
+    # loaded (the first job's): point it at this job's folder, or later jobs' stems land
+    # in a folder that no longer exists.
+    sep.output_dir = str(tmp)
+    if getattr(sep, "model_instance", None) is not None:
+        sep.model_instance.output_dir = str(tmp)
     files = [Path(tmp / f) if not os.path.isabs(f) else Path(f) for f in sep.separate(str(src))]
     ctx.log(f"separator outputs: {[f.name for f in files]}")
     vocals = next(f for f in files if "(vocals)" in f.name.lower())

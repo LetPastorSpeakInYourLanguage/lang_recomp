@@ -12,6 +12,7 @@ const KIND_HINT: Record<SeriesKind, string> = {
   course: "lessons from an education channel",
   news: "news segments with recurring anchors",
   other: "any group of videos worked on together",
+  single: "a standalone video",
 };
 
 const codes = (v: string) => v.split(/[\s,]+/).map((x) => x.trim().toLowerCase()).filter(Boolean);
@@ -20,7 +21,7 @@ export default function Home({ projects, series, reload }: { projects: Project[]
   const [adding, setAdding] = useState(false);
   const [src, setSrc] = useState("en");
   const [tgt, setTgt] = useState("am");
-  const standalone = projects.filter((p) => !p.series_id);
+  const standalone = projects.filter((p) => p.standalone);
 
   return (
     <div className="p-16 max-w-[1100px] mx-auto w-full flex flex-col gap-14">
