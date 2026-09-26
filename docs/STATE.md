@@ -31,7 +31,16 @@ Hard-won lessons: [LESSONS.md](LESSONS.md).
    owner runs `lb_worker.ipynb` (Run all) as often as needed — batches resume. Then press
    "Load N finished" on the series page. **Owner rule: nothing runs or downloads on this
    PC** — active job folder is Colab again, the local worker was stopped.
-4. Then A6, A7, then Phase B (community server) — see PLAN.md.
+4. **In flight on `feat/colab-run`** (not merged): runs (`app/runs.py`, worker stage
+   `pipeline` in `worker/lb_worker/stages/run.py`), library folders (`app/libraries.py`,
+   standard in `docs/LIBRARY_FOLDERS.md`), captions/subtitles (`app/captions.py`), batched
+   Whisper across videos (`worker/lb_worker/batch_asr.py`), packages with media `ref`,
+   brief project lists. Still to do on it: App must fetch the open project's full summary
+   (lists are brief now); Libraries screen + Runs panel; notebook wording + publish `app/`
+   to Drive; first real Colab run (6 Minute English + a PCDL sample).
+5. **Then the team hub** — design approved in `docs/TEAM.md` (media identity by content,
+   devices, hub/member modes, locate/copy, device-addressed runs, edit safety).
+6. Then A6, A7 — see PLAN.md.
 
 ### Working method the owner asked for
 
