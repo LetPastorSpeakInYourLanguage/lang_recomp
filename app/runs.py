@@ -19,7 +19,7 @@ import re
 import time
 from pathlib import Path
 
-from . import db, libraries, package, project, series, settings
+from . import db, libraries, package, project, series, settings, tasks
 
 STAGES = ["fetch", "transcribe", "translate", "voice", "mix"]
 VIDEO = {".mp4", ".mkv", ".webm", ".mov", ".m4v", ".avi", ".mp3", ".m4a", ".wav", ".flac", ".ogg", ".opus"}
@@ -115,10 +115,43 @@ def create_for(pids: list[str], root_id: str, stages: list[str] | None = None, o
 PREPARED = "prepared-"  # jobs-row id of a run that is only prepared (no queue job)
 
 
-def listing(owner: str) -> list[dict]:
-    """Runs of a work ("series:<id>") or a library ("library:<id>"), newest first."""
-    return [status(j["root"], j["role"], j["id"].split("@")[0]) for j in db.rows(
+SETTLE_S = 60  # a results file untouched this long is complete on this PC (Drive has synced it)
+
+
+def listing(owner: str, auto_open: bool = True) -> list[dict]:
+    """Runs of a work ("series:<id>") or a library ("library:<id>"), newest first. Results
+    a run saved since they were last opened are brought in by themselves (in the background)."""
+    out = [status(j["root"], j["role"], j["id"].split("@")[0]) for j in db.rows(
         "SELECT * FROM jobs WHERE project_id=? AND stage='pipeline' ORDER BY created DESC", owner)]
+    for r in out:
+        at = r.get("results_at")
+        if auto_open and at and at > (r.get("opened_at") or 0) and time.time() - at > SETTLE_S                 and (r["root"], r["run"]) not in _opening:
+            _opening.add((r["root"], r["run"]))
+            r["opening"] = True
+            tasks.start(owner, "open run results", _auto_open, r["root"], r["run"], serial="run-results")
+    return out
+
+
+_opening: set = set()
+
+
+def _auto_open(root_id: str, run_id: str, update) -> None:
+    try:
+        update(None, run_id)
+        open_results(root_id, run_id)
+    finally:
+        _opening.discard((root_id, run_id))
+
+
+def _opened_path() -> Path:
+    return db.DATA / "run_results_opened.json"
+
+
+def _opened() -> dict:
+    try:
+        return json.loads(_opened_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
 
 
 def status(root_id: str, run_id: str, job_id: str | None = None) -> dict:
@@ -132,16 +165,30 @@ def status(root_id: str, run_id: str, job_id: str | None = None) -> dict:
     except (OSError, ValueError):
         return {"run": run_id, "root": root_id, "state": "unreachable"}
     srcs = state.get("sources", {})
+    res = sorted((d / "results").glob("*.lbwork")) if (d / "results").exists() else []
+    results_at = max((f.stat().st_mtime for f in res), default=None)
+    if settings.root(root_id).get("kind") == "colab":  # run by hand in the notebook: no queue to ask
+        job_id = f"{PREPARED}{run_id}"
     if job_id and job_id.startswith(PREPARED):  # run by hand: only the folder tells how far it got
-        st = {"state": "done" if state.get("finished") else "running" if srcs else "prepared"}
+        seen = max((p.stat().st_mtime for p in (d / "state.json", d / "log.txt") if p.exists()), default=0)
+        st = {"state": "done" if state.get("finished") else "prepared" if not srcs
+              else "running" if time.time() - seen < 15 * 60 else "paused"}
+        log = d / "log.txt"
+        if log.exists():  # the last line the notebook printed
+            try:
+                with open(log, "rb") as f:
+                    f.seek(max(0, log.stat().st_size - 400))
+                    st["note"] = f.read().decode("utf-8", "replace").strip().splitlines()[-1][9:]
+            except (OSError, IndexError):
+                pass
         job_id = None
     return {"run": run_id, "name": man.get("name"), "job": job_id, "root": root_id, "state": st.get("state"),
             "progress": st.get("progress"), "note": st.get("note"), "stages": man["stages"], "videos": len(man["sources"]),
             "works": len(man.get("works") or [1]),
             "done": {s: sum(1 for v in srcs.values() if v.get(s) == "done") for s in STAGES},
             "failed": sum(1 for v in srcs.values() if any(str(x).startswith("failed") for x in v.values())),
-            "saved": sorted(state.get("stages", {})), "has_results": bool(list((d / "results").glob("*.lbwork")))
-            if (d / "results").exists() else False, "created": man["created"], "finished": state.get("finished"),
+            "saved": sorted(state.get("stages", {})), "has_results": bool(res), "results_at": results_at,
+            "opened_at": _opened().get(f"{root_id}/{run_id}"), "created": man["created"], "finished": state.get("finished"),
             "timings": state.get("timings", {}), "report": report}
 
 
@@ -151,6 +198,10 @@ def open_results(root_id: str, run_id: str) -> dict:
     files = sorted(d.glob("*.lbwork")) if d.exists() else []
     if not files:
         raise ValueError("this run has not saved results yet")
+    at = max(f.stat().st_mtime for f in files)
     reps = [package.import_work(f, fetch=False, ref_root=_root(root_id)) for f in files]
+    seen = _opened()
+    seen[f"{root_id}/{run_id}"] = at
+    _opened_path().write_text(json.dumps(seen), encoding="utf-8")
     return {"works": [r["work"] for r in reps], "sources": {k: [x for r in reps for x in r["sources"][k]] for k in ("added", "matched")},
             "lines": sum(r["lines"] for r in reps), "notes": [n for r in reps for n in r["notes"]]}

@@ -42,10 +42,32 @@ print("device", dev, flush=True)
 t0 = time.time()
 model = OmniVoice.from_pretrained(a.model, device_map=dev, dtype=dtype)
 load_s = time.time() - t0
+class Progress:
+    """A line every 30 s (and at the end): how many done, how fast, how long is left."""
+
+    def __init__(self, what, total):
+        self.what, self.total, self.done, self.failed = what, total, 0, 0
+        self.t0 = self.last = time.time()
+
+    def step(self, ok=True, force=False):
+        self.done += 1
+        self.failed += 0 if ok else 1
+        now = time.time()
+        if force or now - self.last >= 30 or self.done == self.total:
+            self.last = now
+            per = (now - self.t0) / max(1, self.done)
+            left = per * (self.total - self.done) / 60
+            print(f"{self.what} {self.done}/{self.total} ({100 * self.done // max(1, self.total)}%) · "
+                  f"{per:.1f} s each · about {left:.0f} min left" + (f" · {self.failed} failed" if self.failed else ""),
+                  flush=True)
+
 items = json.load(open(a.manifest, encoding="utf-8"))
 results = {"model": a.model, "load_s": round(load_s, 1), "items": {}}
 if dev.startswith("cuda"):
     torch.cuda.reset_peak_memory_stats()
+todo = sum(1 for it in items if not (it.get("skip_existing") and os.path.exists(it["out"])))
+print(f"model loaded in {load_s:.0f} s; {todo} takes to make ({len(items) - todo} already made)", flush=True)
+bar = Progress("voiced", todo)
 
 for it in items:
     if it.get("skip_existing") and os.path.exists(it["out"]):
@@ -75,7 +97,10 @@ for it in items:
     except Exception as e:
         results["items"][it["key"]] = {"ok": False, "error": f"{type(e).__name__}: {e}",
                                        "trace": traceback.format_exc()[-800:]}
-    print(it["key"], results["items"][it["key"]].get("ok"), flush=True)
+    r = results["items"][it["key"]]
+    if not r["ok"]:
+        print(f"take {it['key']} failed: {r['error'][:200]}", flush=True)
+    bar.step(r["ok"])
 
 results["device"] = dev
 if dev.startswith("cuda"):

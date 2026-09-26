@@ -49,14 +49,23 @@ class _Ctx:
         self.work = scratch / "work"
         self.work.mkdir(parents=True, exist_ok=True)
         self.progress = 0.0
+        self.log_file = root / "runs" / run_id / "log.txt"
 
     def model(self, key, loader):
         if key not in self.worker._models:
             self.worker._models[key] = loader()
         return self.worker._models[key]
 
+    prints = True
+
     def log(self, msg: str) -> None:
-        pass  # the runner prints its own progress
+        """Printed in the notebook, and kept in runs/<run>/log.txt (readable from your PC)."""
+        print(msg, flush=True)
+        try:
+            with open(self.log_file, "a", encoding="utf-8") as f:
+                f.write(time.strftime("%H:%M:%S ") + msg + "\n")
+        except OSError:
+            pass
 
     def stop(self) -> None:
         self.stopped = True

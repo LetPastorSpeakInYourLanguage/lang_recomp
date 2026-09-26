@@ -14,6 +14,7 @@ manifest: {"speakers": {spk: [heldout wav, ...]},
 import argparse
 import json
 import os
+import time
 import unicodedata
 
 import numpy as np
@@ -135,7 +136,30 @@ def av(path):
 
 
 # ---- score --------------------------------------------------------------------------------
+class Progress:
+    """A line every 30 s (and at the end): how many done, how fast, how long is left."""
+
+    def __init__(self, what, total):
+        self.what, self.total, self.done, self.failed = what, total, 0, 0
+        self.t0 = self.last = time.time()
+
+    def step(self, ok=True, force=False):
+        self.done += 1
+        self.failed += 0 if ok else 1
+        now = time.time()
+        if force or now - self.last >= 30 or self.done == self.total:
+            self.last = now
+            per = (now - self.t0) / max(1, self.done)
+            left = per * (self.total - self.done) / 60
+            print(f"{self.what} {self.done}/{self.total} ({100 * self.done // max(1, self.total)}%) · "
+                  f"{per:.1f} s each · about {left:.0f} min left" + (f" · {self.failed} failed" if self.failed else ""),
+                  flush=True)
+
+
 out = {"asr_model": a.asr, "items": {}, "sources": {}}
+print(f"scoring {len(m['items'])} takes: voice similarity" + (", re-transcribed with " + a.asr if ctc is not None else "")
+      + (", emotion" if av_model is not None else ""), flush=True)
+bar = Progress("scored", len(m["items"]))
 for it in m["items"]:
     r = {}
     try:
@@ -156,7 +180,9 @@ for it in m["items"]:
     except Exception as e:
         r["error"] = f"{type(e).__name__}: {e}"
     out["items"][it["key"]] = r
-    print(it["key"], r.get("sim"), r.get("cer"), r.get("dur"), flush=True)
+    if "error" in r:
+        print(f"take {it['key']}: {r['error'][:200]}", flush=True)
+    bar.step("error" not in r)
 
 # Reference points: how similar is a real held-out clip to its own speaker's centroid?
 out["real_sim"] = {spk: round(float(np.mean([float(xvec(w) @ centroids[spk]) for w in wavs])), 3)

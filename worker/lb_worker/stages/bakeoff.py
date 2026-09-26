@@ -47,7 +47,7 @@ def sh(cmd, ctx, cwd=None, timeout=3600) -> subprocess.CompletedProcess:
         line = line.split("\r")[-1]
         if line:
             lines.append(line)
-            if len(lines) <= 400 and "%|" not in line:
+            if len(lines) <= 5000 and "%|" not in line:
                 ctx.log("  | " + line[:300])
         if time.time() > deadline:
             p.kill()

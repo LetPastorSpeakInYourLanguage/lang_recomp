@@ -94,7 +94,8 @@ class Run:
     # ---- bookkeeping ---------------------------------------------------------------------
     def log(self, msg: str) -> None:
         self.ctx.log(msg)
-        print(msg, flush=True)
+        if not getattr(self.ctx, "prints", False):  # the research notebook's context prints itself
+            print(msg, flush=True)
 
     def save_state(self) -> None:
         with self.lock:
@@ -457,6 +458,8 @@ class Run:
                 man.write_text(json.dumps(items, ensure_ascii=False), encoding="utf-8")
                 from app import langs as L
                 t = time.time()
+                self.log(f"voicing {todo} {lang} takes with OmniVoice ({engine['steps']} steps): loading the model, "
+                         "then a progress line every 30 s")
                 sh([sys.executable, TTS / "omnivoice_gen.py", "--model", engine["model"], "--manifest", man,
                     "--out", ctx.work / f"gen_{lang}_res.json", "--steps", str(engine["steps"]),
                     "--language", L.name(lang)], ctx, timeout=12 * 3600)
@@ -468,8 +471,12 @@ class Run:
                  "slot_s": meta[it["key"]]["slot_s"]} for it in made]}, ensure_ascii=False), encoding="utf-8")
             res = ctx.work / f"score_{lang}_res.json"
             asr = (self.opt.get("aligners") or {}).get(lang) or "none"
+            self.log(f"scoring {len(made)} {lang} takes (voice likeness" + ("" if asr == "none" else ", read back by ASR")
+                     + ") to pick the best take per line")
+            t = time.time()
             sh([sys.executable, TTS / "score.py", "--manifest", sman, "--out", res, "--no-emotion", "--asr", asr], ctx)
             scores = json.loads(res.read_text(encoding="utf-8"))["items"] if res.exists() else {}
+            self.log(f"scored {len(scores)} takes in {time.time() - t:.0f} s")
             per: dict[str, dict] = {}
             for it in made:
                 m, sc = meta[it["key"]], scores.get(it["key"], {})

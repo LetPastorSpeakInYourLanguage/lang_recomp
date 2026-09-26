@@ -90,7 +90,7 @@ export type Stage = "fetch" | "transcribe" | "translate" | "voice" | "mix";
 export interface RunInfo {
   run: string; name?: string; job?: string | null; root: string; state: string | null; progress?: number | null; note?: string | null;
   stages?: Stage[]; videos?: number; works?: number; done?: Record<Stage, number>; failed?: number; saved?: string[];
-  has_results?: boolean; created?: number; finished?: number | null; timings?: Record<string, number>;
+  has_results?: boolean; results_at?: number | null; opened_at?: number | null; opening?: boolean; created?: number; finished?: number | null; timings?: Record<string, number>;
   report?: { captions: { video: string; kind: string; captions_raw?: CapCompare; captions_aligned?: CapCompare }[] } | null;
 }
 export interface CapCompare { words: number; wer: number; timing_median_s: number | null; timing_p90_s: number | null }

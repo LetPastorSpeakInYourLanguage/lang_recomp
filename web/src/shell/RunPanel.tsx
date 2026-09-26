@@ -119,6 +119,13 @@ function RunRow({ r, state, onOpened }: { r: RunInfo; state: AppState | null; on
         }}><Download size={11} />Open results</Button>}
       </div>
       {r.videos ? <Progress value={(done ?? 0) / r.videos} tone="good" /> : null}
+      {r.has_results && (
+        <div className="text-10 text-dim">
+          {r.opening ? "Bringing the newest results into the app…"
+            : r.opened_at && r.results_at && r.opened_at >= r.results_at ? `In the app: results saved ${new Date(r.results_at * 1000).toLocaleTimeString()}`
+            : "New results on the device: they come into the app once Drive has synced them (about a minute)."}
+        </div>
+      )}
       {r.done && <div className="text-10 font-mono text-faint">{(r.stages ?? []).map((s) => `${s} ${r.done![s] ?? 0}/${r.videos}`).join(" · ")}</div>}
       {r.report?.captions?.length ? (
         <div className="text-10 font-mono text-dim">

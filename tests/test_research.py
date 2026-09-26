@@ -75,3 +75,37 @@ def test_a_newer_run_in_the_same_notebook_stops_the_older_ones_threads(tmp_path)
     assert not old.cancelled()
     research._current["ctx"] = research._Ctx(tmp_path, "b", tmp_path)
     assert old.cancelled()
+
+
+def test_a_drive_run_shows_its_folder_state_and_its_new_results_come_in_by_themselves(tmp_path, monkeypatch):
+    import json
+    import os
+    import time
+
+    from app import runs
+
+    monkeypatch.setattr(db, "DATA", tmp_path / "lib")
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "lib" / "t.db")
+    db._local.c = None
+    started = []
+    monkeypatch.setattr(tasks, "start", lambda owner, kind, fn, *a, **k: started.append(a) or "t")
+    d = Path(settings.root("colab")["path"]) / "runs" / "r1"
+    (d / "results").mkdir(parents=True)
+    (d / "manifest.json").write_text(json.dumps({"stages": ["fetch", "voice"], "sources": ["a"], "created": 1}))
+    (d / "state.json").write_text(json.dumps({"sources": {"a": {"fetch": "done"}}}))
+    (d / "log.txt").write_text("18:30:01 voiced 57/439 (12%) · 3.1 s each · about 20 min left\n", encoding="utf-8")
+    res = d / "results" / "w.lbwork"
+    res.write_bytes(b"x")
+    old = time.time() - 600
+    os.utime(res, (old, old))
+    db.run("INSERT INTO jobs (id,project_id,stage,created,role,root) VALUES (?,?,?,?,?,?)",
+           "old-queue-job", "series:s", "pipeline", 1, "r1", "colab")
+
+    r = runs.listing("series:s")[0]
+    assert r["state"] == "running" and r["note"].startswith("voiced 57/439")  # the queue job is ignored
+    assert started == [("colab", "r1")] and r["opening"]
+    runs.listing("series:s")
+    assert len(started) == 1  # already being brought in: not twice
+    for p in (d / "state.json", d / "log.txt"):
+        os.utime(p, (old - 3600, old - 3600))
+    assert runs.status("colab", "r1", "old-queue-job")["state"] == "paused"
