@@ -1,6 +1,7 @@
 # STATE — where the build is right now
 
 The working memory of this project. Read this first when picking the work up.
+**Every open task, across all plans, with priorities: [BACKLOG.md](BACKLOG.md)** — keep it updated in the same commit as the work.
 Plan: [PLAN.md](PLAN.md). Decisions and why: [DECISIONS.md](DECISIONS.md).
 Hard-won lessons: [LESSONS.md](LESSONS.md).
 
