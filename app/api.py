@@ -204,6 +204,13 @@ def new_source(sid: str, body: NewSource):
         raise HTTPException(400, str(e))
 
 
+@app.delete("/api/series/{sid}")
+def delete_series(sid: str):
+    """Removes the grouping only; every source stays, as a standalone video."""
+    _s(sid)
+    return {"released": series.remove(sid)}
+
+
 class Order(BaseModel):
     ids: list[str]
 

@@ -51,6 +51,8 @@ def test_reorder_and_attach(fresh):
     assert p["series_id"] == s["id"] and "ti" in p["targets"]  # the series' languages join its own
     assert [x["id"] for x in series.sources(s["id"])][-1] == solo["id"]
     assert series.attach(solo["id"], None)["series_id"] is None
+    assert series.remove(s["id"]) == 2  # the grouping goes, the videos stay
+    assert project.summary(a["id"])["series_id"] is None and series.listing() == []
 
 
 def test_bad_kind_and_language_codes_are_refused(fresh):

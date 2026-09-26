@@ -16,6 +16,8 @@ export interface Project {
   id: string; name: string; source: string; src_lang: string; tgt_lang: string;
   max_speakers: number | null; clip_start: number | null; clip_end: number | null; duration: number | null;
   created: number;
+  /** the series this source belongs to (null = standalone), its place in it, and its YouTube id */
+  series_id: string | null; position: number | null; origin_id: string | null; published: string | null;
   counts: { sentences: number; translated: number; translated_by_lang: Record<string, number>; reviewed: number; chapters: number;
     characters: number; genders_set: number; kept: number };
   /** target languages, primary first */
@@ -24,6 +26,17 @@ export interface Project {
   import: Task | null;
   meta: Record<string, unknown>;
 }
+
+export type SeriesKind = "show" | "channel" | "speaker" | "course" | "news" | "other";
+export interface Series {
+  id: string; name: string; kind: SeriesKind; feed_url: string | null; src_lang: string; targets: string[];
+  settings: { max_speakers?: number | null }; created: number;
+  /** what the series and one of its sources are called, e.g. "Channel" / "video" */
+  label: string; unit: string;
+  counts?: { sources: number; duration: number };
+  sources?: Project[];
+}
+export interface NewVideo { name: string; source: string; clip_start?: number | null; clip_end?: number | null; max_speakers?: number | null }
 
 export interface Job { id: string; stage: string; role: string; root: string; created: number; state: string | null; progress: number | null; error: string | null; result: Record<string, unknown> | null; elapsed_s: number | null; heartbeat: number | null }
 
@@ -82,8 +95,19 @@ export const api = {
   state: () => req<AppState>("GET", "/api/state"),
   projects: () => req<Project[]>("GET", "/api/projects"),
   project: (p: string) => req<Project>("GET", `/api/projects/${p}`),
-  create: (b: { name: string; source: string; clip_start?: number | null; clip_end?: number | null; max_speakers?: number | null }) =>
-    req<Project>("POST", "/api/projects", b),
+  create: (b: NewVideo & { src_lang?: string; tgt_lang?: string }) => req<Project>("POST", "/api/projects", b),
+  seriesKinds: () => req<{ kind: SeriesKind; label: string; unit: string }[]>("GET", "/api/series/kinds"),
+  seriesList: () => req<Series[]>("GET", "/api/series"),
+  series: (s: string) => req<Series>("GET", `/api/series/${s}`),
+  createSeries: (b: { name: string; kind: SeriesKind; src_lang: string; targets: string[]; feed_url?: string | null; settings?: Series["settings"] }) =>
+    req<Series>("POST", "/api/series", b),
+  patchSeries: (s: string, b: Partial<Pick<Series, "name" | "kind" | "src_lang" | "targets" | "feed_url" | "settings">>) =>
+    req<Series>("PATCH", `/api/series/${s}`, b),
+  addSource: (s: string, b: NewVideo & { origin_id?: string | null; published?: string | null }) =>
+    req<Project>("POST", `/api/series/${s}/sources`, b),
+  deleteSeries: (s: string) => req<{ released: number }>("DELETE", `/api/series/${s}`),
+  orderSeries: (s: string, ids: string[]) => req<Project[]>("PUT", `/api/series/${s}/order`, { ids }),
+  attachProject: (p: string, series_id: string | null) => req<Project>("PUT", `/api/projects/${p}/series`, { series_id }),
   analyze: (p: string, root?: string) => req("POST", `/api/projects/${p}/analyze`, { root }),
   settings: () => req<Settings>("GET", "/api/settings"),
   saveSettings: (s: Settings) => req<Settings>("PUT", "/api/settings", s),

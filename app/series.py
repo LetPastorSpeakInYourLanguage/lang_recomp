@@ -129,6 +129,16 @@ def attach(pid: str, sid: str | None) -> dict:
     return project.summary(pid)
 
 
+def remove(sid: str) -> int:
+    """Remove the series itself. Its sources are kept and become standalone videos.
+    Returns how many sources were released."""
+    get(sid)
+    n = len(db.rows("SELECT id FROM projects WHERE series_id=?", sid))
+    db.run("UPDATE projects SET series_id=NULL, position=NULL WHERE series_id=?", sid)
+    db.run("DELETE FROM series WHERE id=?", sid)
+    return n
+
+
 def reorder(sid: str, ids: list[str]) -> list[dict]:
     """Set the sources' order; ids not listed keep their relative order after the listed ones."""
     get(sid)

@@ -37,7 +37,7 @@ export default function TopBar({ project, screen, settingsOpen }: { project: Pro
       <button onClick={() => go(null)} className="flex items-center gap-8 flex-none bg-transparent border-0 text-current p-0">
         <div className="w-18 h-18 bg-white text-top text-9.5 font-bold flex items-center justify-center tracking-tight rounded-2">LB</div>
         <div className="text-12 font-semibold tracking-wide whitespace-nowrap">
-          Lang-Bridge <span className="opacity-60 font-normal hidden sm:inline">EN → አማርኛ</span>
+          Lang-Bridge {project && <span className="opacity-60 font-normal font-mono text-11 hidden sm:inline">{project.src_lang} → {project.targets.join(", ")}</span>}
         </div>
       </button>
 
