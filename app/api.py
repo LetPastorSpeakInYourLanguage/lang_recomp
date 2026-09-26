@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import aligners, chapters, db, langs, mix, project, settings, tasks, voice
+from . import aligners, chapters, db, langs, mix, project, series, settings, tasks, voice
 
 app = FastAPI(title="Lang-Bridge")
 WEB = Path(__file__).resolve().parents[1] / "web" / "dist"
@@ -115,8 +115,115 @@ def list_projects():
 def new_project(body: NewProject):
     if not body.source.strip():
         raise HTTPException(400, "source is required")
-    return project.create(body.name.strip() or "Untitled", body.source, body.clip_start,
-                          body.clip_end, body.max_speakers, body.src_lang, body.tgt_lang)
+    try:
+        return project.create(body.name.strip() or "Untitled", body.source, body.clip_start,
+                              body.clip_end, body.max_speakers, body.src_lang, body.tgt_lang)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+# ---- series ------------------------------------------------------------------------------
+def _s(sid: str) -> dict:
+    try:
+        return series.get(sid)
+    except KeyError:
+        raise HTTPException(404, "no such series")
+
+
+class NewSeries(BaseModel):
+    name: str
+    kind: str = "other"
+    src_lang: str = "en"
+    targets: list[str] = ["am"]
+    feed_url: str | None = None
+    settings: dict = {}
+
+
+class SeriesPatch(BaseModel):
+    name: str | None = None
+    kind: str | None = None
+    src_lang: str | None = None
+    targets: list[str] | None = None
+    feed_url: str | None = None
+    settings: dict | None = None
+
+
+class NewSource(BaseModel):
+    name: str
+    source: str
+    clip_start: float | None = None
+    clip_end: float | None = None
+    max_speakers: int | None = None
+    origin_id: str | None = None
+    published: str | None = None
+
+
+@app.get("/api/series/kinds")
+def series_kinds():
+    return [{"kind": k, "label": v[0], "unit": v[1]} for k, v in series.KINDS.items()]
+
+
+@app.get("/api/series")
+def list_series():
+    return series.listing()
+
+
+@app.post("/api/series")
+def new_series(body: NewSeries):
+    if not body.name.strip():
+        raise HTTPException(400, "a series needs a name")
+    try:
+        return series.create(body.name, body.kind, body.src_lang, body.targets, body.feed_url, body.settings)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/series/{sid}")
+def get_series(sid: str):
+    return _s(sid) | {"sources": series.sources(sid)}
+
+
+@app.patch("/api/series/{sid}")
+def patch_series(sid: str, body: SeriesPatch):
+    _s(sid)
+    try:
+        return series.update(sid, **body.model_dump(exclude_none=True))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/series/{sid}/sources")
+def new_source(sid: str, body: NewSource):
+    _s(sid)
+    if not body.source.strip():
+        raise HTTPException(400, "source is required")
+    try:
+        return series.add_source(sid, body.name.strip() or "Untitled", body.source.strip(), body.clip_start,
+                                 body.clip_end, body.max_speakers, body.origin_id, body.published)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+class Order(BaseModel):
+    ids: list[str]
+
+
+@app.put("/api/series/{sid}/order")
+def order_series(sid: str, body: Order):
+    _s(sid)
+    return series.reorder(sid, body.ids)
+
+
+class Attach(BaseModel):
+    series_id: str | None = None  # none = standalone
+
+
+@app.put("/api/projects/{pid}/series")
+def attach_project(pid: str, body: Attach):
+    _p(pid)
+    if body.series_id:
+        _s(body.series_id)
+    return series.attach(pid, body.series_id)
 
 
 @app.get("/api/projects/{pid}")

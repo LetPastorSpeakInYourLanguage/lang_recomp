@@ -47,11 +47,21 @@ def slug(name: str) -> str:
 
 # ---- import ------------------------------------------------------------------------------
 def create(name: str, source: str, clip_start: float | None, clip_end: float | None,
-           max_speakers: int | None, src_lang: str = "en", tgt_lang: str = "am") -> dict:
+           max_speakers: int | None, src_lang: str = "en", tgt_lang: str = "am",
+           extra_targets: list[str] | tuple = (), series: dict | None = None) -> dict:
+    """A new project (a source), imported and analysed in the background. ``series``
+    places it in a series: {series_id, position, origin_id, published}."""
+    for lang in (src_lang, tgt_lang, *extra_targets):
+        check_lang(lang)
     pid = slug(name)
-    db.run("INSERT INTO projects (id,name,source,src_lang,tgt_lang,max_speakers,clip_start,clip_end,created)"
-           " VALUES (?,?,?,?,?,?,?,?,?)", pid, name, source, src_lang, tgt_lang, max_speakers,
-           clip_start, clip_end, time.time())
+    se = series or {}
+    db.run("INSERT INTO projects (id,name,source,src_lang,tgt_lang,max_speakers,clip_start,clip_end,created,"
+           "series_id,position,origin_id,published) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+           pid, name, source, src_lang, tgt_lang, max_speakers, clip_start, clip_end, time.time(),
+           se.get("series_id"), se.get("position"), se.get("origin_id"), se.get("published"))
+    extra = [t for t in extra_targets if t not in (tgt_lang, src_lang)]
+    if extra:
+        db.set_meta(pid, targets=extra)
     tasks.start(pid, "import", _import, pid)
     return get(pid)
 
@@ -297,10 +307,14 @@ def targets(pid: str) -> list[str]:
     return [p["tgt_lang"], *extra]
 
 
+def check_lang(lang: str) -> str:
+    if not re.fullmatch(r"[a-z]{2,3}(-[a-z0-9]{2,8})?", lang or ""):
+        raise ValueError(f"'{lang}' is not a language code; use one such as en, am, om, ti, sw or fr")
+    return lang
+
+
 def add_target(pid: str, lang: str) -> list[str]:
-    lang = lang.strip().lower()
-    if not re.fullmatch(r"[a-z]{2,3}(-[a-z0-9]{2,8})?", lang):
-        raise ValueError("use a language code such as am, om, ti, sw or fr")
+    lang = check_lang(lang.strip().lower())
     ts = targets(pid)
     if lang not in ts and lang != get(pid)["src_lang"]:
         db.set_meta(pid, targets=[*ts[1:], lang])

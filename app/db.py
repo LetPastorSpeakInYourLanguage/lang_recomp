@@ -19,6 +19,12 @@ CREATE TABLE IF NOT EXISTS projects (
   tgt_lang TEXT DEFAULT 'am', max_speakers INTEGER, clip_start REAL, clip_end REAL,
   duration REAL, video TEXT, audio TEXT, created REAL, meta TEXT DEFAULT '{}'
 );
+-- A family of sources: a show's episodes, a channel, one speaker's talks, a course, a
+-- news programme. New sources inherit its languages and settings (app/series.py).
+CREATE TABLE IF NOT EXISTS series (
+  id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT DEFAULT 'other', feed_url TEXT,
+  src_lang TEXT DEFAULT 'en', targets TEXT DEFAULT '["am"]', settings TEXT DEFAULT '{}', created REAL
+);
 CREATE TABLE IF NOT EXISTS jobs (
   id TEXT PRIMARY KEY, project_id TEXT, stage TEXT, created REAL, role TEXT
 );
@@ -68,6 +74,11 @@ def conn() -> sqlite3.Connection:
 
 
 def _migrate(c: sqlite3.Connection) -> None:
+    pcols = {r[1] for r in c.execute("PRAGMA table_info(projects)")}
+    # a project is a source; standalone ones have no series
+    for col, decl in (("series_id", "TEXT"), ("position", "REAL"), ("origin_id", "TEXT"), ("published", "TEXT")):
+        if col not in pcols:
+            c.execute(f"ALTER TABLE projects ADD COLUMN {col} {decl}")
     cols = {r[1] for r in c.execute("PRAGMA table_info(jobs)")}
     if "root" not in cols:  # jobs predating job-folder settings all went to Drive
         c.execute("ALTER TABLE jobs ADD COLUMN root TEXT DEFAULT 'colab'")
