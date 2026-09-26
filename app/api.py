@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import aligners, banks, cast, chapters, db, feeds, langs, library, mix, package, project, recurring, series, settings, tasks, voice
+from . import aligners, banks, bulk, cast, chapters, db, feeds, langs, library, mix, package, project, recurring, series, settings, tasks, voice
 
 app = FastAPI(title="Lang-Bridge")
 WEB = Path(__file__).resolve().parents[1] / "web" / "dist"
@@ -232,12 +232,15 @@ class FeedPick(BaseModel):
     items: list[dict]  # entries from the feed: {id, title, url}
     clip_start: float | None = None
     clip_end: float | None = None
+    remote: bool = False  # only register them: a remote worker fetches them (nothing downloads here)
 
 
 @app.post("/api/series/{sid}/feed/add")
 def add_from_feed(sid: str, body: FeedPick):
     """Add the picked videos in order; their downloads run one at a time."""
     _s(sid)
+    if body.remote:
+        return bulk.add(sid, body.items, (body.clip_start, body.clip_end))
     added, skipped = [], []
     for it in body.items:
         try:
@@ -472,6 +475,42 @@ def discover_parts(sid: str, min_s: float = 8.0):
     return out
 
 
+# ---- whole-channel runs on Colab (app/bulk.py) -----------------------------------------------
+class BulkReq(BaseModel):
+    root: str = "colab"
+    batch: int = bulk.BATCH
+    height: int = 720
+
+
+@app.get("/api/series/{sid}/bulk")
+def bulk_status(sid: str):
+    _s(sid)
+    return bulk.status(sid)
+
+
+@app.post("/api/series/{sid}/bulk")
+def bulk_queue(sid: str, body: BulkReq):
+    """Queue every video of the series that has no lines yet, in batches, on a remote worker."""
+    _s(sid)
+    try:
+        return bulk.queue(sid, body.root, max(1, min(body.batch, 100)), body.height)
+    except (KeyError, OSError) as e:
+        raise HTTPException(409, f"job folder not reachable: {e}")
+
+
+@app.post("/api/series/{sid}/bulk/load")
+def bulk_load(sid: str):
+    """Load finished videos: lines and speakers here, video and audio stay on Drive."""
+    _s(sid)
+    return bulk.load(sid)
+
+
+@app.post("/api/series/{sid}/bulk/retry")
+def bulk_retry(sid: str):
+    _s(sid)
+    return bulk.retry_failed(sid)
+
+
 class Order(BaseModel):
     ids: list[str]
 
@@ -560,8 +599,8 @@ def job_log(pid: str, jid: str):
 def media(pid: str, name: str):
     p = _p(pid)
     d = project.pdir(pid)
-    path = {"video": p["video"], "audio": p["audio"], "vocals": d / "vocals.flac",
-            "background": d / "background.flac"}.get(name)
+    path = {"video": p["video"], "audio": p["audio"], "vocals": project.stem(pid, "vocals"),
+            "background": project.stem(pid, "background")}.get(name)
     if not path or not Path(path).exists():
         raise HTTPException(404, f"{name} not available")
     return FileResponse(path)
@@ -573,7 +612,7 @@ _energy_cache: dict[str, tuple[float, np.ndarray]] = {}
 
 def _energy(pid: str) -> np.ndarray | None:
     """RMS of the vocal stem in 50 ms frames, decoded once and cached per file mtime."""
-    f = project.pdir(pid) / "vocals.flac"
+    f = project.stem(pid, "vocals")
     if not f.exists():
         return None
     mt = f.stat().st_mtime

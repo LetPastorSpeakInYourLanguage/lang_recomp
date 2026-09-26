@@ -69,6 +69,11 @@ export interface ImportReport {
   translations: Record<string, { written: number; kept_here: number; conflicts: number }>; fetching: string[]; notes: string[];
 }
 export interface Collection { id: number; name: string; items: number; deleted: number }
+export interface BulkStatus {
+  jobs: { id: string; state: string | null; progress: number | null; note: string | null; error: string | null; result: Record<string, number> | null }[];
+  videos: { done: number; loaded: number; failed: number; queued: number; not_sent: number };
+  failures: { id: string; name: string; error: string }[];
+}
 export interface NewVideo { name: string; source: string; clip_start?: number | null; clip_end?: number | null; max_speakers?: number | null }
 
 export interface Job { id: string; stage: string; role: string; root: string; created: number; state: string | null; progress: number | null; error: string | null; result: Record<string, unknown> | null; elapsed_s: number | null; heartbeat: number | null }
@@ -158,8 +163,13 @@ export const api = {
   addSource: (s: string, b: NewVideo & { origin_id?: string | null; published?: string | null }) =>
     req<Project>("POST", `/api/series/${s}/sources`, b),
   seriesFeed: (s: string, limit = 100) => req<{ title: string; channel: string | null; entries: FeedEntry[] }>("GET", `/api/series/${s}/feed?limit=${limit}`),
-  addFromFeed: (s: string, items: Pick<FeedEntry, "id" | "title" | "url">[], clip: { clip_start?: number | null; clip_end?: number | null } = {}) =>
-    req<{ added: string[]; skipped: { id: string; reason: string }[] }>("POST", `/api/series/${s}/feed/add`, { items, ...clip }),
+  addFromFeed: (s: string, items: Pick<FeedEntry, "id" | "title" | "url">[], clip: { clip_start?: number | null; clip_end?: number | null } = {}, remote = false) =>
+    req<{ added: string[]; skipped: { id: string; reason: string }[] }>("POST", `/api/series/${s}/feed/add`, { items, ...clip, remote }),
+  bulkStatus: (s: string) => req<BulkStatus>("GET", `/api/series/${s}/bulk`),
+  bulkQueue: (s: string, b: { root?: string; batch?: number; height?: number } = {}) =>
+    req<{ jobs: string[]; videos: number; root: string }>("POST", `/api/series/${s}/bulk`, b),
+  bulkLoad: (s: string) => req<{ loaded: string[]; errors: { id: string; error: string }[] }>("POST", `/api/series/${s}/bulk/load`),
+  bulkRetry: (s: string) => req<{ jobs: string[]; videos: number }>("POST", `/api/series/${s}/bulk/retry`),
   clips: (q: { series?: string; source?: string; collection?: number; kind?: ClipKind; deleted?: boolean; lang?: string } = {}) =>
     req<Clip[]>("GET", `/api/clips?${new URLSearchParams(Object.entries(q).filter(([, v]) => v !== undefined && v !== "").map(([k, v]) => [k, String(v)])).toString()}`),
   createClip: (b: { source_id: string; title: string; kind?: ClipKind; note?: string; first_line?: number; last_line?: number; chapter_id?: number; start?: number; end?: number }) =>

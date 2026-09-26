@@ -104,16 +104,19 @@ def _next_position(sid: str) -> float:
 
 
 def add_source(sid: str, name: str, source: str, clip_start: float | None = None, clip_end: float | None = None,
-               max_speakers: int | None = None, origin_id: str | None = None, published: str | None = None) -> dict:
+               max_speakers: int | None = None, origin_id: str | None = None, published: str | None = None,
+               defer: bool = False) -> dict:
     """Create a source in this series, with the series' languages and settings, and
-    start its import (download, audio, analysis) like any project."""
+    start its import (download, audio, analysis) like any project — or, ``defer``,
+    only register it for a remote worker to fetch (app/bulk.py)."""
     s = get(sid)
     if origin_id and db.row("SELECT id FROM projects WHERE series_id=? AND origin_id=?", sid, origin_id):
         raise ValueError("this video is already in the series")
     ms = max_speakers if max_speakers is not None else s["settings"].get("max_speakers")
     p = project.create(name, source, clip_start, clip_end, ms, s["src_lang"], s["targets"][0],
                        extra_targets=s["targets"][1:],
-                       series=dict(series_id=sid, position=_next_position(sid), origin_id=origin_id, published=published))
+                       series=dict(series_id=sid, position=_next_position(sid), origin_id=origin_id, published=published),
+                       defer=defer)
     return project.summary(p["id"])
 
 

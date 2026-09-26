@@ -40,7 +40,12 @@ export default function Sidebar({ projects, series, project, screen, openSeries,
                 <span className={`text-11.5 whitespace-nowrap overflow-hidden text-ellipsis flex-1 ${on ? "font-semibold" : "text-text"}`}>{s.name}</span>
                 <span className="text-9.5 font-mono text-faint">{mine.length}</span>
               </button>
-              {mine.map((p) => <ProjectRow key={p.id} p={p} on={project?.id === p.id} screen={screen} indent />)}
+              {/* a long series shows its first videos (and the open one); the rest are on its page */}
+              {mine.filter((p, i) => i < 8 || project?.id === p.id).map((p) => <ProjectRow key={p.id} p={p} on={project?.id === p.id} screen={screen} indent />)}
+              {mine.length > 8 && (
+                <button onClick={() => goSeries(s.id)} className="w-full text-left border-0 bg-transparent pl-26 pr-12 py-3 text-10.5 text-accent hover:bg-panel3">
+                  {mine.length - 8} more…</button>
+              )}
             </div>
           );
         })}

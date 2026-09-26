@@ -28,24 +28,11 @@ PAD_S = 0.15  # audio kept on each side of a segment, so edge words are not clip
 
 @stage("align", model_key="aligner")
 def align(ctx) -> dict:
-    ensure("transformers", probe="transformers")
     ensure("soundfile", probe="soundfile")
     import soundfile as sf
-    import torch
-    from transformers import AutoModelForCTC, AutoProcessor
 
     repo = ctx.params["model"]
-    dev = device()
-    if dev == "cpu" and hasattr(torch, "xpu") and torch.xpu.is_available():
-        dev = "xpu"
-
-    def load():
-        return AutoProcessor.from_pretrained(repo), AutoModelForCTC.from_pretrained(repo).to(dev).eval()
-
-    proc, model = ctx.model(f"aligner:{repo}", load)
-    vocab = proc.tokenizer.get_vocab()
-    blank = proc.tokenizer.pad_token_id if proc.tokenizer.pad_token_id is not None else 0
-    delim = getattr(proc.tokenizer, "word_delimiter_token", None) or "|"
+    aligner = ctx.model(f"aligner:{repo}", lambda: load_aligner(repo))
 
     audio_path = next(p for p in map(ctx.input, ctx.job["inputs"]) if p.suffix.lower() in (".flac", ".wav", ".mp3"))
     doc_path = next(p for p in map(ctx.input, ctx.job["inputs"]) if p.suffix.lower() == ".json")
@@ -55,16 +42,38 @@ def align(ctx) -> dict:
 
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(audio_path), "-ac", "1", "-ar", "16000", str(wav16)], check=True)
     audio, sr = sf.read(str(wav16), dtype="float32")
+    ok, total = align_doc(doc, audio, sr, aligner, repo, ctx.log, ctx.set_progress)
+    (ctx.out / "aligned.json").write_text(json.dumps(doc, ensure_ascii=False, indent=1), encoding="utf-8")
+    ctx.log(f"aligned {ok}/{total} segments with {repo}")
+    return {"model": repo, "segments": total, "aligned": ok}
 
+
+def load_aligner(repo: str) -> dict:
+    ensure("transformers", probe="transformers")
+    import torch
+    from transformers import AutoModelForCTC, AutoProcessor
+
+    dev = device()
+    if dev == "cpu" and hasattr(torch, "xpu") and torch.xpu.is_available():
+        dev = "xpu"
+    proc = AutoProcessor.from_pretrained(repo)
+    return {"proc": proc, "model": AutoModelForCTC.from_pretrained(repo).to(dev).eval(), "dev": dev,
+            "vocab": proc.tokenizer.get_vocab(),
+            "blank": proc.tokenizer.pad_token_id if proc.tokenizer.pad_token_id is not None else 0,
+            "delim": getattr(proc.tokenizer, "word_delimiter_token", None) or "|"}
+
+
+def align_doc(doc: dict, audio, sr: int, a: dict, repo: str, log=print, progress=lambda *_: None) -> tuple[int, int]:
+    """Align every segment of an asr.json document in place; returns (aligned, total)."""
     ok = total = 0
     segs = doc["segments"]
     for i, seg in enumerate(segs):
-        ctx.set_progress(i / max(1, len(segs)))
+        progress(i / max(1, len(segs)))
         total += 1
         try:
-            words = align_segment(seg, audio, sr, proc, model, vocab, blank, delim, dev)
+            words = align_segment(seg, audio, sr, a["proc"], a["model"], a["vocab"], a["blank"], a["delim"], a["dev"])
         except Exception as e:  # one bad segment must not sink the rest
-            ctx.log(f"segment {i}: {type(e).__name__}: {e}")
+            log(f"segment {i}: {type(e).__name__}: {e}")
             words = None
         seg["aligner"] = repo
         seg["align_ok"] = words is not None
@@ -72,9 +81,7 @@ def align(ctx) -> dict:
             seg["words"] = words
             ok += 1
     doc["aligner"] = repo
-    (ctx.out / "aligned.json").write_text(json.dumps(doc, ensure_ascii=False, indent=1), encoding="utf-8")
-    ctx.log(f"aligned {ok}/{total} segments with {repo}")
-    return {"model": repo, "segments": total, "aligned": ok}
+    return ok, total
 
 
 def normalise(ch: str, vocab: dict) -> str | None:
