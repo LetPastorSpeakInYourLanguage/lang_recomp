@@ -193,6 +193,7 @@ def import_work(path: str | Path, fetch: bool = True) -> dict:
                     rep["notes"].append(f"kept this library's {lang} name '{have['name']}' for {c['name']} (package: '{name}')")
 
         pid_of: dict[str, str] = {}
+        need_fetch: list[str] = []
         found = [(json.loads(z.read(x)), x[: -len("source.json")]) for x in names
                  if x.startswith("sources/") and x.endswith("/source.json")]
         for sj, base in sorted(found, key=lambda f: (f[0].get("position") or 0, f[0]["name"])):  # the work's order
@@ -223,8 +224,7 @@ def import_work(path: str | Path, fetch: bool = True) -> dict:
                            a.get("talk_s") or 0, time.time())
             _place_media(z, base, pid, tmp)
             if fetch and not _has_media(pid):
-                project.refetch(pid)
-                rep["fetching"].append(pid)
+                need_fetch.append(pid)
 
         for c in people:  # banks, now that the sources exist
             for b in c.get("bank", []):
@@ -239,6 +239,9 @@ def import_work(path: str | Path, fetch: bool = True) -> dict:
                        " VALUES (?,?,?,?,?,?,?,?,?,?)", c["uid"], src, b["line_id"], b["start"], b["end"], b["text"],
                        b["role"], b["manual"], str(dest), time.time())
 
+        if need_fetch:
+            _fetch_media(sid, need_fetch)
+            rep["fetching"] = need_fetch
         _import_library(json.loads(z.read("library.json")), sid, pid_of, rep)
         for lang in wj.get("languages", []):
             _import_language(z, lang, pid_of, rep)
@@ -288,6 +291,18 @@ def _place_media(z: zipfile.ZipFile, base: str, pid: str, tmp: str) -> None:
                         "-ar", "44100", "-c:a", "flac", str(dest)], check=True)
         if name == "audio":
             db.run("UPDATE projects SET audio=? WHERE id=?", str(dest), pid)
+
+
+def _fetch_media(sid: str, pids: list[str]) -> None:
+    """Media that did not travel: a Colab worker fetches them into Drive when Colab is
+    the active job folder (nothing through this PC); otherwise they are fetched here."""
+    from . import bulk
+
+    if settings.root()["kind"] == "colab":
+        bulk.queue(sid, settings.root()["id"], steps=["fetch"], ids=pids)
+    else:
+        for pid in pids:
+            project.refetch(pid)
 
 
 def _has_media(pid: str) -> bool:

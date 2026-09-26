@@ -104,19 +104,31 @@ def enable_xpu_for_separator(log=print) -> None:
 def asr(ctx) -> dict:
     """faster-whisper with Silero VAD and word timestamps."""
     ensure("faster-whisper>=1.1", probe="faster_whisper")
-    from faster_whisper import BatchedInferencePipeline, WhisperModel
 
     size = ctx.params.get("model", "large-v3")
-    lang = ctx.params.get("language")  # None = detect
-    dev = device()
-    path = whisper_path(size, ctx.log)
-    model = ctx.model(f"whisper:{size}", lambda: WhisperModel(
-        path, device=dev, compute_type="float16" if dev == "cuda" else "int8"))
+    model = ctx.model(f"whisper:{size}", lambda: load_whisper(size, ctx.log))
     audio = ctx.input(ctx.job["inputs"][0])
     wav = ctx.work / "asr16k.wav"
     _ffmpeg("-i", str(audio), "-ac", "1", "-ar", "16000", str(wav))
+    doc = transcribe(model, wav, ctx.params.get("language"), size)  # language None = detect
+    _write(ctx.out / "asr.json", doc)
+    return {"language": doc["language"], "segments": len(doc["segments"]),
+            "words": sum(len(s["words"]) for s in doc["segments"])}
+
+
+def load_whisper(size: str, log=print):
+    from faster_whisper import WhisperModel
+
+    dev = device()
+    return WhisperModel(whisper_path(size, log), device=dev, compute_type="float16" if dev == "cuda" else "int8")
+
+
+def transcribe(model, wav16: Path, lang: str | None, size: str) -> dict:
+    """16 kHz mono wav -> asr.json document (segments with word timings)."""
+    from faster_whisper import BatchedInferencePipeline
+
     pipe = BatchedInferencePipeline(model=model)
-    segs, info = pipe.transcribe(str(wav), language=lang, word_timestamps=True,
+    segs, info = pipe.transcribe(str(wav16), language=lang, word_timestamps=True,
                                  vad_filter=True, batch_size=16, beam_size=5)
     out = []
     for s in segs:
@@ -125,9 +137,7 @@ def asr(ctx) -> dict:
             "words": [{"w": w.word.strip(), "start": round(w.start, 3), "end": round(w.end, 3),
                        "p": round(w.probability, 3)} for w in (s.words or [])],
         })
-    _write(ctx.out / "asr.json", {"language": info.language, "model": size, "segments": out})
-    return {"language": info.language, "segments": len(out),
-            "words": sum(len(s["words"]) for s in out)}
+    return {"language": info.language, "model": size, "segments": out}
 
 
 def whisper_path(size: str, log=print) -> str:
@@ -145,6 +155,25 @@ def diarize(ctx) -> dict:
     """pyannote community-1 on the vocal stem. Writes turns, the exclusive
     (one-speaker-at-a-time) turns and per-speaker centroid embeddings; if an asr.json
     is among the inputs, also stamps a speaker on every word."""
+    name = ctx.params.get("pipeline", "pyannote/speaker-diarization-community-1")
+    pipe = ctx.model(f"pyannote:{name}", lambda: load_pyannote(name))
+    inputs = [ctx.input(r) for r in ctx.job["inputs"]]
+    audio = next(p for p in inputs if p.suffix.lower() in (".flac", ".wav", ".mp3"))
+    wav = ctx.work / "dia16k.wav"
+    _ffmpeg("-i", str(audio), "-ac", "1", "-ar", "16000", str(wav))
+    kw = {k: ctx.params[k] for k in ("num_speakers", "min_speakers", "max_speakers") if k in ctx.params}
+    data = diarize_wav(pipe, wav, kw, name)
+    asr_json = next((p for p in inputs if p.name in ("aligned.json", "asr.json")), None)
+    if asr_json:
+        _write(ctx.out / "asr_spk.json", stamp_speakers(json.loads(asr_json.read_text(encoding="utf-8")), data["exclusive"]))
+    _write(ctx.out / "diarization.json", data)
+    talk = {}
+    for t in data["exclusive"]:
+        talk[t["speaker"]] = talk.get(t["speaker"], 0) + t["end"] - t["start"]
+    return {"speakers": data["labels"], "talk_s": {k: round(v, 1) for k, v in talk.items()}}
+
+
+def load_pyannote(name: str = "pyannote/speaker-diarization-community-1"):
     ensure("pyannote.audio>=4", probe="pyannote.audio")
     import torch
     from pyannote.audio import Pipeline
@@ -157,25 +186,20 @@ def diarize(ctx) -> dict:
     if not token:
         raise RuntimeError("No Hugging Face token (pyannote community-1 is gated): add the HF_TOKEN "
                            "secret in Colab, or run `hf auth login` once on this PC")
-    name = ctx.params.get("pipeline", "pyannote/speaker-diarization-community-1")
+    return Pipeline.from_pretrained(name, token=token).to(torch.device(device()))
 
-    def load():
-        p = Pipeline.from_pretrained(name, token=token)
-        return p.to(torch.device(device()))
 
-    pipe = ctx.model(f"pyannote:{name}", load)
-    inputs = [ctx.input(r) for r in ctx.job["inputs"]]
-    audio = next(p for p in inputs if p.suffix.lower() in (".flac", ".wav", ".mp3"))
-    wav = ctx.work / "dia16k.wav"
-    _ffmpeg("-i", str(audio), "-ac", "1", "-ar", "16000", str(wav))
-    kw = {k: ctx.params[k] for k in ("num_speakers", "min_speakers", "max_speakers") if k in ctx.params}
+def diarize_wav(pipe, wav16: Path, kw: dict, name: str) -> dict:
+    """16 kHz mono wav -> diarization.json document (turns, exclusive turns, centroids)."""
+    import torch
+
     # Hand pyannote the decoded waveform: given a path, pyannote 4 decodes through
     # torchcodec, which needs FFmpeg's shared libraries (absent from standalone
     # Windows FFmpeg builds).
     ensure("soundfile", probe="soundfile")
     import soundfile as sf
 
-    x, sr = sf.read(str(wav), dtype="float32", always_2d=True)
+    x, sr = sf.read(str(wav16), dtype="float32", always_2d=True)
     res = pipe({"waveform": torch.from_numpy(x.T.copy()), "sample_rate": sr}, **kw)
 
     ann = getattr(res, "speaker_diarization", res)
@@ -189,20 +213,16 @@ def diarize(ctx) -> dict:
     centroids = {lab: [round(float(x), 5) for x in embs[i]] for i, lab in enumerate(labels)} \
         if embs is not None and len(embs) == len(labels) else {}
 
-    data = {"pipeline": name, "turns": turns, "exclusive": ex_turns, "centroids": centroids}
-    asr_json = next((p for p in inputs if p.name in ("aligned.json", "asr.json")), None)
-    if asr_json:
-        a = json.loads(asr_json.read_text(encoding="utf-8"))
-        for seg in a["segments"]:
-            for w in seg["words"]:
-                w["spk"] = _speaker_at(ex_turns, (w["start"] + w["end"]) / 2)
-            seg["speaker"] = _majority([w.get("spk") for w in seg["words"]])
-        _write(ctx.out / "asr_spk.json", a)
-    _write(ctx.out / "diarization.json", data)
-    talk = {}
-    for t in ex_turns:
-        talk[t["speaker"]] = talk.get(t["speaker"], 0) + t["end"] - t["start"]
-    return {"speakers": labels, "talk_s": {k: round(v, 1) for k, v in talk.items()}}
+    return {"pipeline": name, "turns": turns, "exclusive": ex_turns, "centroids": centroids, "labels": list(labels)}
+
+
+def stamp_speakers(doc: dict, ex_turns: list[dict]) -> dict:
+    """Give every word, and each segment by majority, the speaker talking at that time."""
+    for seg in doc["segments"]:
+        for w in seg["words"]:
+            w["spk"] = _speaker_at(ex_turns, (w["start"] + w["end"]) / 2)
+        seg["speaker"] = _majority([w.get("spk") for w in seg["words"]])
+    return doc
 
 
 def _speaker_at(turns: list[dict], t: float) -> str | None:

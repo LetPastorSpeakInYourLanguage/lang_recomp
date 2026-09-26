@@ -65,7 +65,7 @@ def queue(pid: str, root_id: str | None = None, ids: list[int] | None = None, ta
     lang = project.lang_or_primary(pid, lang)
     r = settings.root(root_id)
     q = project.queue(r["id"])
-    vocals = project.pdir(pid) / "vocals.flac"
+    vocals = project.stem(pid, "vocals")
     if not vocals.exists():
         raise RuntimeError("no vocal stem yet: load the analysis results first")
     dest = project.pdir(pid) / "voice_banks"

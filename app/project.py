@@ -37,6 +37,13 @@ def pdir(pid: str) -> Path:
     return d
 
 
+def stem(pid: str, name: str) -> Path:
+    """A voice stem ('vocals' or 'background'): where a worker left it (on Drive, for
+    sources fetched and separated remotely), else in the project folder."""
+    at = (db.meta(pid).get("stems") or {}).get(name)
+    return Path(at) if at else pdir(pid) / f"{name}.flac"
+
+
 def single_work(pid: str) -> str:
     """Give a project its own hidden single-source work (a standalone video): the work
     holds its cast and clips, and is what travels when it is shared."""
@@ -60,10 +67,11 @@ def slug(name: str) -> str:
 # ---- import ------------------------------------------------------------------------------
 def create(name: str, source: str, clip_start: float | None, clip_end: float | None,
            max_speakers: int | None, src_lang: str = "en", tgt_lang: str = "am",
-           extra_targets: list[str] | tuple = (), series: dict | None = None) -> dict:
+           extra_targets: list[str] | tuple = (), series: dict | None = None, defer: bool = False) -> dict:
     """A new project (a source), imported and analysed in the background. ``series``
     places it in a series: {series_id, position, origin_id, published}; without one it
-    gets its own single-source work (a standalone video)."""
+    gets its own single-source work (a standalone video). ``defer`` registers it without
+    importing it here (a remote worker fetches and analyses it: app/bulk.py)."""
     for lang in (src_lang, tgt_lang, *extra_targets):
         check_lang(lang)
     pid = slug(name)
@@ -77,7 +85,8 @@ def create(name: str, source: str, clip_start: float | None, clip_end: float | N
         db.set_meta(pid, targets=extra)
     if not se.get("series_id"):
         single_work(pid)
-    tasks.start(pid, "import", _import, pid, serial="import")  # downloads queue up, one at a time
+    if not defer:
+        tasks.start(pid, "import", _import, pid, serial="import")  # downloads queue up, one at a time
     return get(pid)
 
 
@@ -147,9 +156,10 @@ def refetch(pid: str) -> str:
 
 def _refetch(pid: str, update) -> None:
     d = pdir(pid)
-    if not (d / "clip.mp4").exists():
+    p = get(pid)
+    if not (p["video"] and Path(p["video"]).exists()) and not (d / "clip.mp4").exists():
         _fetch(pid, update, keep_audio=True)
-    if (d / "vocals.flac").exists() and (d / "background.flac").exists():
+    if stem(pid, "vocals").exists() and stem(pid, "background").exists():
         update(1.0, "media ready")
         return
     r = settings.root()
@@ -160,8 +170,12 @@ def _refetch(pid: str, update) -> None:
     for _ in range(6 * 60 * 6):  # poll the job folder for up to six hours
         st = q.status(job).get("state")
         if st == "done":
-            for name in ("vocals.flac", "background.flac"):
-                shutil.copy2(q.out_dir(job) / name, d / name)
+            if (db.meta(pid).get("remote") or {}).get("root"):
+                # a source that lives on Drive keeps its stems there too: read in place
+                db.set_meta(pid, stems={n: str(q.out_dir(job) / f"{n}.flac") for n in ("vocals", "background")})
+            else:
+                for name in ("vocals.flac", "background.flac"):
+                    shutil.copy2(q.out_dir(job) / name, d / name)
             update(1.0, "media ready")
             return
         if st == "failed":
@@ -283,6 +297,13 @@ def ingest(pid: str) -> dict:
     out = job_queue(dz).out_dir(dz["id"])
     asr = json.loads((out / "asr_spk.json").read_text(encoding="utf-8"))
     dia = json.loads((out / "diarization.json").read_text(encoding="utf-8"))
+    return ingest_docs(pid, asr, dia)
+
+
+def ingest_docs(pid: str, asr: dict, dia: dict) -> dict:
+    """Lines and speakers from an analysis (asr_spk.json + diarization.json documents),
+    keeping reviewed lines and carrying work over (see keep_reviewed / carry_over)."""
+    d = pdir(pid)
     (d / "asr_spk.json").write_text(json.dumps(asr, ensure_ascii=False), encoding="utf-8")
     (d / "diarization.json").write_text(json.dumps(dia), encoding="utf-8")
     old = db.rows("SELECT * FROM sentences WHERE project_id=?", pid)
