@@ -243,12 +243,12 @@ class Worker:
     def serve(self, once: bool = False, idle_exit_min: float | None = None) -> str:
         """Returns "reload" when newer worker code was published (the notebook then
         re-copies the package and starts again), otherwise "idle"/"once"."""
-        print(f"worker {self.worker_id} watching {self.layout.jobs}  stages={sorted(self.stages)}", flush=True)
+        print(f"Ready ({_device()}): doing the work the app sent to {self.layout.root}", flush=True)
         started_on = self.code_version()
         last_work = now()
         while True:
             if not once and self.code_version() != started_on:
-                print("new worker code published on Drive; reloading", flush=True)
+                print("newer Lang-Bridge code was published; switching to it", flush=True)
                 return "reload"
             self.beat()
             # One job at a time, re-scanning after each: a finished job can unblock
@@ -262,7 +262,7 @@ class Worker:
             if once:
                 return "once"
             if idle_exit_min is not None and now() - last_work > idle_exit_min * 60:
-                print("queue empty; exiting", flush=True)
+                print("nothing left to do", flush=True)
                 return "idle"
             if self.code_version() == started_on:
                 time.sleep(self.poll_s)

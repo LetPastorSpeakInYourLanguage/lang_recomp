@@ -1,4 +1,4 @@
-"""Publish the worker to Drive: copies worker/lb_worker and (re)writes lb_worker.ipynb.
+"""Publish the worker to Drive: copies worker/lb_worker and app/, and (re)writes lb_worker.ipynb.
 
     python scripts/sync_worker.py [--root "G:/My Drive/LangBridge"]
 
@@ -27,59 +27,69 @@ def cell(kind: str, src: str) -> dict:
 
 NOTEBOOK_CELLS = [
     cell("markdown", """
-# Lang-Bridge worker
+# Lang-Bridge on Colab
 
-**Runtime → Change runtime type → T4 GPU**, then **Runtime → Run all** whenever the
-app shows jobs queued for the Colab folder.
+This notebook does the work the Lang-Bridge app sends to your Google Drive: whole **runs**
+(fetch → transcribe → translate → voice → mix, for a series, chosen videos or a library
+folder) and single jobs.
 
-It runs every queued job in `MyDrive/LangBridge/jobs/`, then **stops and releases the
-GPU** by itself. It never sits polling, which is what Colab's terms ask for:
-open it when there is work, let it finish, done.
-Optional: add an `HF_TOKEN` secret (key icon in the left bar) for gated models.
+1. **Runtime → Change runtime type → T4 GPU**
+2. **Runtime → Run all**
+
+It works through everything the app sent, saving results to Drive as it goes — it is safe
+to stop at any time; running it again carries on where it stopped. When everything is
+done it releases the GPU. Then open the results in the app.
+
+Speaker detection uses a gated model: add your Hugging Face token once as a Colab secret
+named `HF_TOKEN` (key icon in the left bar).
 """),
     cell("code", """
-# Set to False to keep the runtime (and its GPU) after the queue is done.
-RELEASE_GPU_WHEN_DONE = True
+# 1 · Connect Google Drive and keep downloaded models on it (only the first session pays for them)
+RELEASE_GPU_WHEN_DONE = True   # False keeps the GPU after the work is done
 
 from google.colab import drive
 drive.mount('/content/drive')
 ROOT = '/content/drive/MyDrive/LangBridge'
 
-# Everything re-downloadable lives on Drive, so only the first session pays for it:
-# Hugging Face models, torch hub weights, pip's wheel cache, and big checkpoints.
 import os
 CACHE = f'{ROOT}/cache'
 for k, sub in {'HF_HOME': 'hf', 'TORCH_HOME': 'torch', 'PIP_CACHE_DIR': 'pip', 'LB_CACHE': ''}.items():
     os.environ[k] = f'{CACHE}/{sub}'.rstrip('/')
     os.makedirs(os.environ[k], exist_ok=True)
-print('model cache:', CACHE)
+print('Drive connected; models are kept in', CACHE)
 """),
     cell("code", """
-import os, sys, shutil
+# 2 · The Hugging Face token (for speaker detection)
 try:
     from google.colab import userdata
     os.environ['HF_TOKEN'] = userdata.get('HF_TOKEN')
-    print('HF_TOKEN loaded from Colab secrets')
+    print('Hugging Face token found')
 except Exception as e:
-    print('no HF_TOKEN secret (only needed for gated models):', type(e).__name__)
+    print('No HF_TOKEN secret: speaker detection will not run until you add it.', type(e).__name__)
 """),
     cell("code", """
-# Work through the queue, then stop. A short grace period catches jobs the app is
-# still syncing to Drive. If new worker code is published mid-run, it reloads first.
+# 3 · Do the work the app sent (runs and jobs), then stop
+import sys, shutil, time
 sys.path.insert(0, '/content/lb')
+started = time.time()
 while True:
+    # the Lang-Bridge code published to Drive by the app: the worker and the app's own logic
     shutil.rmtree('/content/lb', ignore_errors=True)
-    shutil.copytree(f'{ROOT}/worker/lb_worker', '/content/lb/lb_worker',
-                    ignore=shutil.ignore_patterns('__pycache__'))
-    for m in [m for m in sys.modules if m.startswith('lb_worker')]:
+    for pkg in ('lb_worker', 'app'):
+        shutil.copytree(f'{ROOT}/worker/{pkg}', f'/content/lb/{pkg}', ignore=shutil.ignore_patterns('__pycache__'))
+    for m in [m for m in sys.modules if m.split('.')[0] in ('lb_worker', 'app')]:
         del sys.modules[m]
     from lb_worker.loop import Worker
     if Worker(ROOT, scratch='/content/work', poll_s=10).serve(idle_exit_min=1) != 'reload':
         break
-print('All queued jobs are done.')
+    print('The app published newer code; continuing with it.')
+print(f'All done in {(time.time() - started) / 60:.0f} min. Open the results in the app.')
+"""),
+    cell("code", """
+# 4 · Give the GPU back
 if RELEASE_GPU_WHEN_DONE:
     from google.colab import runtime
-    print('Releasing the GPU runtime.')
+    print('Releasing the GPU.')
     runtime.unassign()
 """),
 ]
@@ -103,6 +113,10 @@ def main() -> None:
     dst = root / "worker" / "lb_worker"
     shutil.rmtree(dst, ignore_errors=True)
     shutil.copytree(SRC, dst, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    # the app's own logic too: runs execute it headless on the worker (worker/lb_worker/stages/run.py)
+    app_dst = root / "worker" / "app"
+    shutil.rmtree(app_dst, ignore_errors=True)
+    shutil.copytree(HERE / "app", app_dst, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     nb = root / "worker" / "lb_worker.ipynb"
     nb.write_text(json.dumps(notebook(), indent=1), encoding="utf-8")
     # Written last: a running worker reloads when this changes, so the package it

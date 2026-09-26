@@ -57,6 +57,7 @@ def stubs(monkeypatch):
             for pid in audios}
 
     monkeypatch.setattr(runmod.batch_asr, "transcribe_many", transcribe_many)
+    monkeypatch.setattr(runmod, "ensure", lambda *a, **k: None)  # no installs in tests
     monkeypatch.setattr(analysis, "load_whisper", lambda *a, **k: "whisper")
     monkeypatch.setattr(analysis, "load_pyannote", lambda *a, **k: "pyannote")
     monkeypatch.setattr(alignmod, "load_aligner", lambda repo: "aligner")

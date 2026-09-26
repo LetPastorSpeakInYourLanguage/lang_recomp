@@ -38,6 +38,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from .. import batch_asr
+from ..deps import ensure
 from ..registry import stage
 
 STAGES = ["fetch", "transcribe", "translate", "voice", "mix"]
@@ -75,8 +76,9 @@ class Run:
             "active": "device", "aligners": self.opt.get("aligners") or {},
             "keep_words": self.opt.get("keep_words") or []}), encoding="utf-8")
         os.environ["LANGBRIDGE_DATA"] = str(lib)
-        # the app package: next to the worker in this repo, or published beside it on Drive
-        for p in (Path(__file__).resolve().parents[3], self.root / "worker"):
+        # the app package: beside the worker (this repo, or where the notebook copied both),
+        # or published next to it on Drive
+        for p in (Path(__file__).resolve().parents[3], Path(__file__).resolve().parents[2], self.root / "worker"):
             if (p / "app" / "__init__.py").exists() and str(p) not in sys.path:
                 sys.path.insert(0, str(p))
         from app import bulk, cast, db, mix, package, project, settings, voice  # noqa: F401
@@ -125,6 +127,10 @@ class Run:
     def go(self) -> dict:
         A = self.app
         t0 = time.time()
+        ensure("yt-dlp", probe="yt_dlp")  # fetching, captions
+        if "transcribe" in self.stages:
+            ensure("faster-whisper>=1.1", probe="faster_whisper")
+            ensure("soundfile", probe="soundfile")
         works = self.man.get("works") or [{"file": "work.lbwork"}]
         self.sids = [A.package.import_work(self.dir / w["file"], fetch=False, ref_root=self.root)["work"] for w in works]
         for f in sorted((self.dir / "results").glob("*.lbwork")) if (self.dir / "results").exists() else []:
