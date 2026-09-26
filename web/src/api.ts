@@ -43,8 +43,17 @@ export interface Clip {
   id: number; series_id: string | null; source_id: string; source_name?: string; title: string; kind: ClipKind; note: string;
   rev: number; segments: { source_id: string; start: number; end: number }[]; duration: number; recurring: boolean;
   collections: number[]; deleted: number; lines?: ClipLine[];
+  /** recurring parts only: how many occurrences are in each state */
+  occurrences?: Record<OccurrenceStatus, number>;
   /** languages whose mix of the source is rendered → its mtime (for cache-busting) */
   mixed?: Record<string, number>;
+}
+export type OccurrenceStatus = "proposed" | "confirmed" | "rejected";
+export interface Occurrence { id: number; clip_id: number; source_id: string; source_name: string | null; start: number; end: number; score: number; status: OccurrenceStatus }
+export interface PartCandidate {
+  origin: { source_id: string; source_name?: string; start: number; end: number };
+  members: { source_id: string; source_name?: string; start: number; end: number; score: number }[];
+  sources: number; of: number; kind: ClipKind; duration: number;
 }
 export interface Collection { id: number; name: string; items: number; deleted: number }
 export interface NewVideo { name: string; source: string; clip_start?: number | null; clip_end?: number | null; max_speakers?: number | null }
@@ -127,6 +136,11 @@ export const api = {
   removeClip: (id: number) => req<Clip>("DELETE", `/api/clips/${id}`),
   restoreClip: (id: number) => req<Clip>("POST", `/api/clips/${id}/restore`),
   setClipCollections: (id: number, collection_ids: number[]) => req<{ collection_ids: number[] }>("PUT", `/api/clips/${id}/collections`, { collection_ids }),
+  searchClip: (id: number) => req<Occurrence[]>("POST", `/api/clips/${id}/search`),
+  occurrences: (id: number) => req<Occurrence[]>("GET", `/api/clips/${id}/occurrences`),
+  setOccurrence: (id: number, status: OccurrenceStatus) => req<Occurrence>("PATCH", `/api/occurrences/${id}`, { status }),
+  confirmAll: (id: number) => req<{ confirmed: number }>("POST", `/api/clips/${id}/occurrences/confirm_all`),
+  discover: (s: string, min_s = 8) => req<PartCandidate[]>("GET", `/api/series/${s}/discover?min_s=${min_s}`),
   collections: (deleted = false) => req<Collection[]>("GET", `/api/collections?deleted=${deleted}`),
   createCollection: (name: string) => req<Collection>("POST", "/api/collections", { name }),
   renameCollection: (id: number, name: string) => req<Collection>("PATCH", `/api/collections/${id}`, { name }),

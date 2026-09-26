@@ -61,6 +61,18 @@ def test_shared_runs_discover_the_intro_without_being_told(prints):
     assert fp.shared_runs(prints["ep1"], prints["other"], min_s=8) == []
 
 
+def test_a_part_shared_to_the_very_end_runs_to_the_end(tmp_path):
+    outro = chords(7, 10)
+    x = np.concatenate([chords(8, 30), outro])
+    y = np.concatenate([chords(9, 12), outro])
+    fps = []
+    for name, sig in (("x", x), ("y", y)):
+        wavfile.write(tmp_path / f"{name}.wav", SR, (sig / np.abs(sig).max() * 20000).astype(np.int16))
+        fps.append(fp.compute(tmp_path / f"{name}.wav"))
+    r = fp.shared_runs(*fps, min_s=6)[0]
+    assert abs(r["a_start"] - 30) < 0.3 and abs(r["a_end"] - 40) < 0.5 and abs(r["b_end"] - 22) < 0.5
+
+
 def test_parts_too_short_to_search_are_refused(prints):
     with pytest.raises(ValueError):
         fp.part_frames(prints["ep1"], 20.0, 22.5)

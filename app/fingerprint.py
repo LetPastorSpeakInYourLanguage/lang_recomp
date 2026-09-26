@@ -27,6 +27,7 @@ FRAME_S = 4096 / 3 / 11025  # ≈0.1238 s between Chromaprint items (algorithm 1
 SPAN = 18
 HEAD = 4                    # items starting up to ~4 frames before a shared stretch already match it
 TAIL = 12                   # a found run's last clean item ends ~12 frames before the stretch does
+LAST = 21                   # a file's last ~21 items are never produced: a run reaching them runs to the end
 MIN_PART_FRAMES = 16        # ⇒ a part must be ≳ 4 s long to be searched for
 PART_BITS = 9.0             # mean differing bits (of 32) for a part to count as found
 RUN_BITS = 10.0             # smoothed per-frame differing bits inside a shared run
@@ -147,6 +148,8 @@ def shared_runs(a: np.ndarray, b: np.ndarray, min_s: float = 8.0, max_bits: floa
             if r1 - r0 + TAIL < min_len:
                 continue
             end = r1 - 1 + TAIL  # the last clean item still describes TAIL frames of shared sound
+            if lo + r1 >= len(a) - 2 or lo + r1 - shift >= len(b) - 2:
+                end = r1 - 1 + LAST  # shared to the end of a file: the missing items were shared too
             r0 = min(r0 + HEAD, end)  # and the first clean items begin a little before it
             found.append({"a_start": to_seconds(lo + r0), "a_end": to_seconds(lo + end), "b_start": to_seconds(lo + r0 - shift),
                           "b_end": to_seconds(lo + end - shift), "score": round(float(bits[r0:r1].mean()), 2)})

@@ -1,6 +1,6 @@
-import { Archive, ArchiveRestore, Bookmark, Plus, Repeat, Trash2, Undo2 } from "lucide-react";
+import { Archive, ArchiveRestore, Bookmark, Check, Plus, Repeat, Search, Trash2, Undo2, X } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
-import { api, fmtTime, usePoll, type Clip, type ClipKind, type Collection, type Project, type Series } from "../api";
+import { api, fmtTime, usePoll, type Clip, type ClipKind, type Collection, type Occurrence, type Project, type Series } from "../api";
 import { go, goClips } from "../router";
 import { langName, useLangNames } from "../shell/LangBar";
 import { Button, Empty, PlayButton, Tag } from "../ui";
@@ -163,6 +163,7 @@ function ClipCard({ c, lang, cols, onChanged }: { c: Clip; lang: string; cols: C
           ))}
         </div>
       )}
+      {c.recurring && !c.deleted && <Occurrences c={c} onChanged={onChanged} />}
       {cols.length > 0 && (
         <div className="flex items-center gap-4 flex-wrap">
           {cols.map((col) => (
@@ -170,6 +171,52 @@ function ClipCard({ c, lang, cols, onChanged }: { c: Clip; lang: string; cols: C
               className={`h-20 px-7 rounded-full border text-10 ${c.collections.includes(col.id) ? "bg-accent border-accent text-white" : "bg-panel border-border2 text-dim hover:border-accent"}`}>
               {col.name}
             </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Where a recurring part occurs in the series. Hits are proposals; confirmed ones are
+ *  dubbed once, from this clip, wherever they occur. */
+function Occurrences({ c, onChanged }: { c: Clip; onChanged: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [list, setList] = useState<Occurrence[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const n = c.occurrences ?? { proposed: 0, confirmed: 0, rejected: 0 };
+  async function load() { setList(await api.occurrences(c.id)); }
+  async function run(fn: () => Promise<unknown>) {
+    setBusy(true); setErr(null);
+    try { await fn(); await load(); onChanged(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  }
+  return (
+    <div className="border border-border rounded-3 bg-panel2">
+      <div className="flex items-center gap-8 px-8 py-5 text-11">
+        <Repeat size={12} className="text-accent" />
+        <button className="bg-transparent border-0 p-0 text-text hover:text-accent" onClick={() => { setOpen(!open); if (!open) void load(); }}>
+          Occurs in {n.confirmed} confirmed{n.proposed ? ` · ${n.proposed} to check` : ""}{n.rejected ? ` · ${n.rejected} rejected` : ""}
+        </button>
+        <span className="flex-1" />
+        {err && <span className="text-bad">{err}</span>}
+        {n.proposed > 0 && <Button variant="ghost" disabled={busy} onClick={() => void run(() => api.confirmAll(c.id))}><Check size={11} />Confirm all</Button>}
+        <Button disabled={busy} onClick={() => { setOpen(true); void run(() => api.searchClip(c.id)); }}><Search size={11} />{busy ? "Listening…" : "Find in series"}</Button>
+      </div>
+      {open && list && (
+        <div className="border-t border-border">
+          {!list.length && <div className="px-8 py-6 text-10.5 text-faint">Not found elsewhere yet. Find in series listens to every source of the series.</div>}
+          {list.map((o) => (
+            <div key={o.id} className="flex items-center gap-8 px-8 py-4 text-11 border-b border-border last:border-0">
+              <PlayButton src={api.media(o.source_id, "audio")} start={o.start} end={o.end} k={`occ-${o.id}`} size={18} />
+              <button onClick={() => go(o.source_id, "transcript")} className="bg-transparent border-0 p-0 text-dim hover:text-accent truncate max-w-[220px]">{o.source_name ?? o.source_id}</button>
+              <span className="font-mono text-10 text-faint">{fmtTime(o.start)}–{fmtTime(o.end)}</span>
+              <span className="font-mono text-9.5 text-faint" title="differing fingerprint bits (of 32); lower is closer">{o.score.toFixed(1)}</span>
+              <span className="flex-1" />
+              <Tag tone={o.status === "confirmed" ? "good" : o.status === "rejected" ? "bad" : "warn"}>{o.status}</Tag>
+              {o.status !== "confirmed" && <Button variant="ghost" title="Yes, this is the same part" onClick={() => void run(() => api.setOccurrence(o.id, "confirmed"))}><Check size={11} /></Button>}
+              {o.status !== "rejected" && <Button variant="ghost" title="Not the same part" onClick={() => void run(() => api.setOccurrence(o.id, "rejected"))}><X size={11} /></Button>}
+            </div>
           ))}
         </div>
       )}

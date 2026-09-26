@@ -1,9 +1,9 @@
-import { ArrowDown, ArrowUp, Bookmark, Library, ListVideo, LogOut } from "lucide-react";
+import { ArrowDown, ArrowUp, Bookmark, Library, ListVideo, LogOut, Repeat } from "lucide-react";
 import { useState } from "react";
-import { api, fmtTime, parseTime, usePoll, type FeedEntry } from "../api";
+import { api, fmtTime, parseTime, usePoll, type ClipKind, type FeedEntry, type PartCandidate } from "../api";
 import { go, goClips } from "../router";
 import VideoForm, { LangOptions } from "../shell/VideoForm";
-import { Button, Empty, Panel, Tag, stateTone } from "../ui";
+import { Button, Empty, Panel, PlayButton, Tag, stateTone } from "../ui";
 
 const codes = (v: string) => v.split(/[\s,]+/).map((x) => x.trim().toLowerCase()).filter(Boolean);
 
@@ -73,7 +73,9 @@ export default function Series({ id, onChanged }: { id: string; onChanged: () =>
 
       {d.feed_url && <FromFeed id={id} unit={d.unit} onAdded={() => void reload()} />}
 
-      <Panel title={`Add a ${d.unit}`}>
+      {sources.length > 1 && <RepeatingParts id={id} unit={d.unit} />}
+
+      <Panel title={`Add ${/^[aeiou]/.test(d.unit) ? "an" : "a"} ${d.unit}`}>
         <VideoForm submitLabel={`Add ${d.unit}`} onSubmit={async (v) => { await api.addSource(id, v); await reload(); }}
           note={<>Takes <span className="font-mono">{d.src_lang}→{d.targets.join(",")}</span> from the series; downloads, then queues the analysis.</>} />
       </Panel>
@@ -111,6 +113,70 @@ export default function Series({ id, onChanged }: { id: string; onChanged: () =>
           </table>
         )}
       </Panel>
+    </div>
+  );
+}
+
+/** Intros, openers, outros and other parts the series' sources share, found by
+ *  listening; saving one makes a recurring clip whose occurrences are then proposed. */
+function RepeatingParts({ id, unit }: { id: string; unit: string }) {
+  const [cands, setCands] = useState<PartCandidate[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [saved, setSaved] = useState<string | null>(null);
+  async function find() {
+    setBusy(true); setErr(null); setSaved(null);
+    try { setCands(await api.discover(id)); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  }
+  async function save(c: PartCandidate, kind: ClipKind, title: string) {
+    setErr(null);
+    try {
+      const clip = await api.createClip({ source_id: c.origin.source_id, start: c.origin.start, end: c.origin.end, title, kind });
+      const occ = await api.searchClip(clip.id);
+      setSaved(`Saved "${title}"; it was found in ${occ.length} other place${occ.length === 1 ? "" : "s"} — confirm them in Clips & collections.`);
+      setCands((cands ?? []).filter((x) => x !== c));
+    } catch (e) { setErr((e as Error).message); }
+  }
+  return (
+    <Panel title="Repeating parts"
+      actions={<Button onClick={() => void find()} disabled={busy}><Repeat size={12} />{busy ? "Listening…" : "Find repeating parts"}</Button>}>
+      {err && <div className="px-12 py-8 text-11 text-bad">{err}</div>}
+      {saved && <div className="px-12 py-8 text-11 text-good">{saved}</div>}
+      {!cands && !busy && <div className="px-12 py-10 text-11 text-faint">
+        Listens across the {unit}s for sound they share — an intro, an opener, a sign-off. A part saved here is dubbed once and reused wherever it occurs.
+      </div>}
+      {cands && !cands.length && <div className="px-12 py-10 text-11 text-faint">No shared parts of 8 s or more (besides the ones already saved).</div>}
+      {cands?.map((c) => <Candidate key={`${c.origin.source_id}-${c.origin.start}`} c={c} onSave={save} />)}
+    </Panel>
+  );
+}
+
+function Candidate({ c, onSave }: { c: PartCandidate; onSave: (c: PartCandidate, kind: ClipKind, title: string) => Promise<void> }) {
+  const [kind, setKind] = useState<ClipKind>(c.kind);
+  const [title, setTitle] = useState(`${c.kind[0].toUpperCase()}${c.kind.slice(1)}`);
+  const o = c.origin;
+  return (
+    <div className="px-12 py-8 border-b border-border last:border-0 flex flex-col gap-5">
+      <div className="flex items-center gap-8 flex-wrap text-11.5">
+        <PlayButton src={api.media(o.source_id, "audio")} start={o.start} end={o.end} k={`cand-${o.source_id}-${o.start}`} />
+        <span className="font-semibold">{c.duration.toFixed(1)} s</span>
+        <span className="text-dim">in {c.sources} of {c.of}</span>
+        <span className="text-10 font-mono text-faint">{o.source_name} · {fmtTime(o.start)}–{fmtTime(o.end)}</span>
+        <span className="flex-1" />
+        <input className="field w-[150px]" value={title} onChange={(e) => setTitle(e.target.value)} />
+        <select className="field" value={kind} onChange={(e) => setKind(e.target.value as ClipKind)}>
+          {(["intro", "opener", "outro", "jingle", "recurring"] as const).map((k) => <option key={k} value={k}>{k}</option>)}
+        </select>
+        <Button variant="primary" disabled={!title.trim()} onClick={() => void onSave(c, kind, title.trim())}>Save part</Button>
+      </div>
+      <div className="flex items-center gap-6 flex-wrap text-10 text-faint">
+        {c.members.slice(1).map((m) => (
+          <span key={`${m.source_id}-${m.start}`} className="flex items-center gap-4">
+            <PlayButton src={api.media(m.source_id, "audio")} start={m.start} end={m.end} k={`cand-${m.source_id}-${m.start}`} size={16} />
+            {m.source_name} {fmtTime(m.start)}
+          </span>
+        ))}
+      </div>
     </div>
   );
 }
