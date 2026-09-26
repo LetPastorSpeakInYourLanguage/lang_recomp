@@ -14,8 +14,9 @@ def pid(tmp_path, monkeypatch):
     pid = "t"
     db.run("INSERT INTO projects (id,name,created) VALUES (?,?,?)", pid, "t", time.time())
     words = [{"w": w, "start": i * 0.5, "end": i * 0.5 + 0.4} for i, w in enumerate("How are you today?".split())]
-    db.run("INSERT INTO sentences (project_id,id,speaker,start,end,text,words,am) VALUES (?,?,?,?,?,?,?,?)",
-           pid, 1, "A", 0.0, 1.9, "How are you today?", json.dumps(words), "x")
+    db.run("INSERT INTO sentences (project_id,id,speaker,start,end,text,words) VALUES (?,?,?,?,?,?,?)",
+           pid, 1, "A", 0.0, 1.9, "How are you today?", json.dumps(words))
+    project.set_translation(pid, 1, "am", "x")
     db.run("INSERT INTO sentences (project_id,id,speaker,start,end,text,words) VALUES (?,?,?,?,?,?,?)",
            pid, 2, "B", 2.5, 3.0, "Fine.", json.dumps([{"w": "Fine.", "start": 2.5, "end": 3.0}]))
     yield pid
@@ -27,7 +28,7 @@ def test_split_uses_word_times(pid):
     s = {x["id"]: x for x in project.sentences(pid)}
     assert s[1]["text"] == "How are" and s[1]["end"] == 0.9
     assert s[r["second"]]["text"] == "you today?" and s[r["second"]]["start"] == 1.0
-    assert s[r["second"]]["speaker"] == "A" and s[1]["am"] == ""
+    assert s[r["second"]]["speaker"] == "A" and s[1]["tr"] == ""  # a split line needs a fresh translation
 
 
 def test_split_rejects_edges(pid):

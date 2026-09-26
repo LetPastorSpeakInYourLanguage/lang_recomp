@@ -31,6 +31,18 @@ CREATE TABLE IF NOT EXISTS sentences (
   am TEXT DEFAULT '', am_locked INTEGER DEFAULT 0, chapter_break INTEGER DEFAULT 0,
   reviewed INTEGER DEFAULT 0, PRIMARY KEY (project_id, id)
 );
+-- One row per line per target language. `provenance` says who wrote it: 'machine'
+-- (translation engine) may be overwritten by the engine; 'human' and 'reviewed' never.
+CREATE TABLE IF NOT EXISTS translations (
+  project_id TEXT, sentence_id INTEGER, lang TEXT, text TEXT DEFAULT '',
+  locked INTEGER DEFAULT 0, provenance TEXT DEFAULT 'machine', updated REAL,
+  PRIMARY KEY (project_id, sentence_id, lang)
+);
+CREATE TABLE IF NOT EXISTS takes (
+  project_id TEXT, sentence_id INTEGER, job_id TEXT, take INTEGER, path TEXT, text TEXT,
+  sim REAL, cer REAL, dur REAL, dur_s REAL, asr TEXT, chosen INTEGER DEFAULT 0, created REAL,
+  lang TEXT, PRIMARY KEY (project_id, sentence_id, job_id, take)
+);
 """
 
 _local = threading.local()
@@ -58,6 +70,22 @@ def _migrate(c: sqlite3.Connection) -> None:
         c.execute("ALTER TABLE sentences ADD COLUMN words TEXT DEFAULT '[]'")
     if "mode" not in scols:  # 'dub' | 'keep' chosen by the person; NULL follows the suggestion
         c.execute("ALTER TABLE sentences ADD COLUMN mode TEXT")
+    if "lang" not in {r[1] for r in c.execute("PRAGMA table_info(takes)")}:
+        c.execute("ALTER TABLE takes ADD COLUMN lang TEXT")
+    # Takes and translations from before languages were data belong to the project's
+    # target language. Both statements only touch rows that lack a language row, so
+    # running them again is a no-op.
+    c.execute("UPDATE takes SET lang=(SELECT tgt_lang FROM projects p WHERE p.id=takes.project_id)"
+              " WHERE lang IS NULL")
+    if "am" in scols:
+        c.execute("INSERT OR IGNORE INTO translations (project_id,sentence_id,lang,text,locked,provenance,updated)"
+                  " SELECT s.project_id, s.id, p.tgt_lang, s.am, s.am_locked,"
+                  " CASE WHEN s.am_locked THEN 'human' ELSE 'machine' END, strftime('%s','now')"
+                  " FROM sentences s JOIN projects p ON p.id=s.project_id WHERE s.am<>''")
+        # The copy is the record now; blanking the old column makes the move one-shot,
+        # so a translation cleared later can never be resurrected from it.
+        c.execute("UPDATE sentences SET am='', am_locked=0 WHERE am<>'' AND EXISTS (SELECT 1 FROM translations t"
+                  " WHERE t.project_id=sentences.project_id AND t.sentence_id=sentences.id)")
     c.commit()
 
 

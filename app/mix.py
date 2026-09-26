@@ -22,7 +22,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import db, project, voice
+from . import db, langs, project, voice
 
 SR = 48000
 GAP_S = 0.08      # silence kept between consecutive dubbed lines
@@ -113,21 +113,31 @@ def set_params(pid: str, changes: dict) -> dict:
     return p
 
 
-def mix_dir(pid: str) -> Path:
-    d = project.pdir(pid) / "mix"
-    d.mkdir(exist_ok=True)
+def mix_dir(pid: str, lang: str | None = None) -> Path:
+    """Renders live per language: mix/<lang>/. A render from before languages were
+    data (files directly in mix/) is moved into the primary language's folder."""
+    lang = project.lang_or_primary(pid, lang)
+    root = project.pdir(pid) / "mix"
+    d = root / lang
+    if not d.exists():
+        d.mkdir(parents=True)
+        if lang == project.get(pid)["tgt_lang"]:
+            for name in ("mix.wav", "dub.wav", "fit.json"):
+                if (root / name).exists():
+                    (root / name).replace(d / name)
     return d
 
 
-def render(pid: str, update=lambda *a, **k: None) -> dict:
+def render(pid: str, lang: str | None = None, update=lambda *a, **k: None) -> dict:
+    lang = project.lang_or_primary(pid, lang)
     p = params(pid)
     d = project.pdir(pid)
     # A failed render must not leave the previous mix behind for export to pick up.
     for stale in ("mix.wav", "dub.wav", "fit.json"):
-        (mix_dir(pid) / stale).unlink(missing_ok=True)
+        (mix_dir(pid, lang) / stale).unlink(missing_ok=True)
     chars = {c["label"]: c for c in db.rows("SELECT * FROM characters WHERE project_id=?", pid)}
-    sents = project.sentences(pid)
-    takes = {t["sentence_id"]: t for t in voice.lines_takes(pid, chosen_only=True)}
+    sents = project.sentences(pid, lang)
+    takes = {t["sentence_id"]: t for t in voice.lines_takes(pid, chosen_only=True, lang=lang)}
 
     update(0.05, "decoding stems")
     background = decode(d / "background.flac")
@@ -148,7 +158,7 @@ def render(pid: str, update=lambda *a, **k: None) -> dict:
             kept.append(s)
             continue
         t = takes.get(s["id"])
-        if t and t["text"] == s["am"] and Path(t["path"]).exists():
+        if t and t["text"] == s["tr"] and Path(t["path"]).exists():
             dubbed.append((s, t))
         else:
             missing.append(s)
@@ -180,7 +190,7 @@ def render(pid: str, update=lambda *a, **k: None) -> dict:
         if room < len(x):
             pl["clipped_s"] = round((len(x) - room) / SR, 2)
         dub[i0:i0 + min(room, len(x))] += x[:room]
-        report.append(pl | {"speaker": s["speaker"], "gain_db": round(gain_db, 1), "am": s["am"], "en": s["text"],
+        report.append(pl | {"speaker": s["speaker"], "gain_db": round(gain_db, 1), "tr": s["tr"], "src": s["text"],
                             "take_id": t["take_id"]})
 
     update(0.85, "mixing")
@@ -207,14 +217,14 @@ def render(pid: str, update=lambda *a, **k: None) -> dict:
     if peak > 0.98:  # never clip: scale the whole mix down, keeping its balance
         mix *= 0.98 / peak
 
-    out = mix_dir(pid)
+    out = mix_dir(pid, lang)
     encode_wav(mix, out / "mix.wav")
     encode_wav(dub, out / "dub.wav")
-    summary = {"rendered_at": time.time(), "params": p, "lines": report, "duration": total,
+    summary = {"rendered_at": time.time(), "lang": lang, "params": p, "lines": report, "duration": total,
                "counts": {"dubbed": len(dubbed), "extras": len(extras), "missing": len(missing), "kept": len(kept),
                           **{st: sum(1 for r in report if r["status"] == st)
                              for st in ("fits", "borrowed", "stretched", "squeezed", "overflow")}},
-               "missing": [{"id": s["id"], "start": s["start"], "en": s["text"]} for s in missing]}
+               "missing": [{"id": s["id"], "start": s["start"], "src": s["text"]} for s in missing]}
     (out / "fit.json").write_text(json.dumps(summary, ensure_ascii=False, indent=1), encoding="utf-8")
     update(1.0, "done")
     return summary["counts"]
@@ -254,45 +264,53 @@ def write_srt(items: list[tuple[float, float, str]], path: Path) -> None:
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def export(pid: str, update=lambda *a, **k: None) -> dict:
+def export(pid: str, lang: str | None = None, update=lambda *a, **k: None) -> dict:
+    lang = project.lang_or_primary(pid, lang)
     proj = project.get(pid)
-    fitp = mix_dir(pid) / "fit.json"
-    if not fitp.exists() or not (mix_dir(pid) / "mix.wav").exists():
+    mdir = mix_dir(pid, lang)
+    fitp = mdir / "fit.json"
+    if not fitp.exists() or not (mdir / "mix.wav").exists():
         raise RuntimeError("render the mix first (the last render did not finish)")
     summary = json.loads(fitp.read_text(encoding="utf-8"))
     out = project.pdir(pid) / "export"
     out.mkdir(exist_ok=True)
     base = out / pid
-    # Amharic subtitles follow where the dub actually plays (the original line's time
-    # when a line is not dubbed); English ones follow the source.
+    # Target subtitles follow where the dub actually plays (the original line's time
+    # when a line is not dubbed, and the original words for lines kept in the original
+    # language); source subtitles follow the source.
     placed = {r["id"]: r for r in summary["lines"]}
-    sents = project.sentences(pid)
-    am = [(placed[s["id"]]["start"], placed[s["id"]]["end"], s["am"]) if s["id"] in placed
-          else (s["start"], s["end"], s["text"] if s["mode"] == "keep" else s["am"])
-          for s in sents if (s["text"] if s["mode"] == "keep" else s["am"]).strip()]
-    en = [(s["start"], s["end"], s["text"]) for s in sents if s["text"].strip()]
+    sents = project.sentences(pid, lang)
+
+    def said(s):
+        return s["text"] if s["mode"] == "keep" else s["tr"]
+
+    tgt = [(placed[s["id"]]["start"], placed[s["id"]]["end"], s["tr"]) if s["id"] in placed
+           else (s["start"], s["end"], said(s)) for s in sents if said(s).strip()]
+    src = [(s["start"], s["end"], s["text"]) for s in sents if s["text"].strip()]
     tracks = []
-    for items, lang in ((am, "am"), (en, "en")):
+    for items, code in ((tgt, lang), (src, proj["src_lang"])):
         if items:
-            write_srt(sorted(items), base.with_suffix(f".{lang}.srt"))
-            tracks.append((base.with_suffix(f".{lang}.srt"), {"am": "amh", "en": "eng"}[lang]))
+            path = out / f"{pid}.{code}.srt"
+            write_srt(sorted(items), path)
+            tracks.append((path, langs.iso3(code)))
     update(0.3, "encoding video")
-    mp4 = out / f"{pid}.amharic.mp4"
-    cmd = ["ffmpeg", "-v", "error", "-y", "-i", proj["video"], "-i", str(mix_dir(pid) / "mix.wav")]
+    mp4 = out / f"{pid}.{lang}.mp4"
+    cmd = ["ffmpeg", "-v", "error", "-y", "-i", proj["video"], "-i", str(mdir / "mix.wav")]
     for path, _ in tracks:
         cmd += ["-i", str(path)]
     cmd += ["-map", "0:v:0", "-map", "1:a:0", "-map", "0:a:0"]
     for k in range(len(tracks)):
         cmd += ["-map", f"{k + 2}:s:0"]
     cmd += ["-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-c:s", "mov_text",
-            "-metadata:s:a:0", "language=amh", "-metadata:s:a:0", "title=Amharic dub",
-            "-metadata:s:a:1", "language=eng", "-metadata:s:a:1", "title=Original",
+            "-metadata:s:a:0", f"language={langs.iso3(lang)}", "-metadata:s:a:0", f"title={langs.name(lang)} dub",
+            "-metadata:s:a:1", f"language={langs.iso3(proj['src_lang'])}", "-metadata:s:a:1", "title=Original",
             "-disposition:a:0", "default", "-disposition:a:1", "0"]
-    for k, (_, lang) in enumerate(tracks):
-        cmd += [f"-metadata:s:s:{k}", f"language={lang}"]
+    for k, (_, tag) in enumerate(tracks):
+        cmd += [f"-metadata:s:s:{k}", f"language={tag}"]
     cmd += ["-shortest", str(mp4)]
     p = subprocess.run(cmd, capture_output=True, text=True)
     if p.returncode:
         raise RuntimeError(f"ffmpeg export failed: {p.stderr[-500:]}")
-    db.set_meta(pid, exported=str(mp4), exported_at=time.time())
+    exports = db.meta(pid).get("exports") or {}
+    db.set_meta(pid, exports=exports | {lang: {"mp4": str(mp4), "at": time.time()}})
     return {"mp4": str(mp4), "subtitles": [str(p) for p, _ in tracks]}
