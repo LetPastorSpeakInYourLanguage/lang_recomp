@@ -22,7 +22,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import db, langs, project, recurring, voice
+from . import cast, db, langs, project, recurring, voice
 
 SR = 48000
 GAP_S = 0.08      # silence kept between consecutive dubbed lines
@@ -135,7 +135,7 @@ def render(pid: str, lang: str | None = None, update=lambda *a, **k: None) -> di
     # A failed render must not leave the previous mix behind for export to pick up.
     for stale in ("mix.wav", "dub.wav", "fit.json"):
         (mix_dir(pid, lang) / stale).unlink(missing_ok=True)
-    chars = {c["label"]: c for c in db.rows("SELECT * FROM characters WHERE project_id=?", pid)}
+    chars = cast.labels_of(pid)
     sents = project.sentences(pid, lang)
     takes = {t["sentence_id"]: t for t in voice.lines_takes(pid, chosen_only=True, lang=lang)}
     # a recurring part's lines use the takes chosen at its origin, placed here

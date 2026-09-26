@@ -10,7 +10,7 @@ import shutil
 import statistics
 import time
 
-from . import db, langs, project, settings
+from . import cast, db, langs, project, settings
 from .translate.length import syllables
 
 ENGINE = {"model": "k2-fsa/OmniVoice", "steps": 16, "speed": 1.4, "takes": 2}
@@ -27,7 +27,7 @@ def _clean(text: str) -> bool:
 def characters_plan(pid: str) -> dict:
     """Per important character: ~10 s of their longest clean lines as the voice
     sample (timbre), and other lines held out to judge likeness fairly."""
-    chars = {c["label"]: c for c in db.rows("SELECT * FROM characters WHERE project_id=?", pid)}
+    chars = cast.labels_of(pid)
     by: dict[str, list[dict]] = {}
     for s in project.sentences(pid):
         if s["speaker"] in chars and chars[s["speaker"]]["important"]:

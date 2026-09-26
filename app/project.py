@@ -11,7 +11,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from . import chapters as chaps, db, settings, tasks
+from . import cast, chapters as chaps, db, settings, tasks
 from .jobs.drive_queue import DriveQueue
 from .translate.google_batch import GoogleBatchTranslator
 from .translate.length import budget
@@ -259,15 +259,11 @@ def ingest(pid: str) -> dict:
     talk: dict[str, float] = {}
     for t in dia["exclusive"]:
         talk[t["speaker"]] = talk.get(t["speaker"], 0) + t["end"] - t["start"]
-    existing = {c["label"]: c for c in db.rows("SELECT * FROM characters WHERE project_id=?", pid)}
-    for i, label in enumerate(sorted(talk)):
-        if label in existing:
-            db.run("UPDATE characters SET talk_s=? WHERE project_id=? AND label=?", talk[label], pid, label)
-        else:
-            db.run("INSERT INTO characters (project_id,label,name,gender,important,color,talk_s)"
-                   " VALUES (?,?,?,?,1,?,?)", pid, label, f"Speaker {i + 1}", None, i % PALETTE, talk[label])
+    # each voice becomes an appearance of a work character: a close match to one the work
+    # already has is proposed for a person to confirm, otherwise a new character
+    linked = cast.ensure_for_source(pid, talk)
     db.set_meta(pid, ingested_at=time.time())
-    return {"sentences": len(sents), "characters": len(talk), "carried_over": len(kept)}
+    return {"sentences": len(sents), "characters": len(talk), "carried_over": len(kept), "cast": linked}
 
 
 def keep_reviewed(old: list[dict], new: list[dict], max_overlap: float = 0.3) -> tuple[list[dict], list[dict]]:
@@ -395,7 +391,7 @@ def summary(pid: str) -> dict:
         if t == p["tgt_lang"]:
             kept_lines = sum(1 for s in ss if s["mode"] == "keep")
             linked = sum(1 for s in ss if s["linked"])
-    chars = db.rows("SELECT * FROM characters WHERE project_id=?", pid)
+    chars = cast.for_source(pid)
     js = jobs(pid)
     analysis = {s: next((j["state"] for j in js if j["stage"] == s), None) for s in ANALYSIS}
     p["counts"] = {"sentences": n["n"] or 0, "translated": per_lang.get(p["tgt_lang"], 0),

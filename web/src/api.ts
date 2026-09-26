@@ -63,7 +63,22 @@ export interface NewVideo { name: string; source: string; clip_start?: number | 
 export interface Job { id: string; stage: string; role: string; root: string; created: number; state: string | null; progress: number | null; error: string | null; result: Record<string, unknown> | null; elapsed_s: number | null; heartbeat: number | null }
 
 export interface Sample { id: number; start: number; end: number; text: string; energy_db: number | null }
-export interface Character { label: string; name: string; gender: string | null; important: number; color: number; talk_s: number; sentences: number; samples: Sample[] }
+/** A voice in one source (its diarizer label) and the work character it is. */
+export interface Character {
+  label: string; uid: string; character_uid: string; name: string; gender: string | null; important: number; color: number;
+  role: string; notes: string; names: Record<string, string>; auto: number;
+  /** "proposed" = the voice sounds like this character; a person confirms or says who it is */
+  status: "proposed" | "confirmed"; score: number | null;
+  /** how many other sources of the work this character appears in */
+  elsewhere: number;
+  matches: { uid: string; name: string; score: number }[];
+  talk_s: number; sentences: number; samples: Sample[];
+}
+export interface CastMember {
+  uid: string; series_id: string; name: string; gender: string | null; role: string; notes: string; color: number; important: number;
+  auto: number; names: Record<string, string>; talk_s: number;
+  appearances: { source_id: string; source_name: string; label: string; status: "proposed" | "confirmed"; score: number | null; talk_s: number }[];
+}
 
 export interface Take {
   take_id: number; sentence_id: number; job_id: string; take: number; text: string; sim: number | null; cer: number | null;
@@ -171,6 +186,14 @@ export const api = {
   patchCharacter: (p: string, label: string, b: Partial<{ name: string; gender: string; important: boolean }>) =>
     req("PATCH", `/api/projects/${p}/characters/${label}`, b),
   merge: (p: string, source: string, into: string) => req("POST", `/api/projects/${p}/characters/merge`, { source, into }),
+  confirmCharacter: (p: string, label: string) => req("POST", `/api/projects/${p}/characters/${label}/confirm`),
+  linkCharacter: (p: string, label: string, character_uid: string | null) =>
+    req("POST", `/api/projects/${p}/characters/${label}/link`, { character_uid }),
+  cast: (s: string) => req<CastMember[]>("GET", `/api/series/${s}/cast`),
+  patchCast: (uid: string, b: Partial<{ name: string; gender: string; important: boolean; role: string; notes: string }>) =>
+    req<CastMember>("PATCH", `/api/cast/${uid}`, b),
+  castName: (uid: string, lang: string, name: string) => req<CastMember>("PUT", `/api/cast/${uid}/names/${lang}`, { name }),
+  mergeCast: (uid: string, into: string) => req<CastMember>("POST", `/api/cast/${uid}/merge`, { into }),
   sentences: (p: string, lang?: string) =>
     req<Sentence[]>("GET", `/api/projects/${p}/sentences${lang ? `?lang=${encodeURIComponent(lang)}` : ""}`),
   patchSentence: (p: string, id: number, b: Partial<{ text: string; speaker: string; lang: string; tr: string; tr_locked: boolean; reviewed: boolean;

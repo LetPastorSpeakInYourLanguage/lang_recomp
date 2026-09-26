@@ -77,6 +77,20 @@ CREATE TABLE IF NOT EXISTS clip_occurrences (
   id INTEGER PRIMARY KEY AUTOINCREMENT, clip_id INTEGER, source_id TEXT, start REAL, end REAL,
   score REAL, status TEXT DEFAULT 'proposed', updated REAL
 );
+-- The cast belongs to a work, not a video (app/cast.py). An appearance says which
+-- character a source's diarizer label is; 'proposed' until a person confirms a voice match.
+CREATE TABLE IF NOT EXISTS cast (
+  uid TEXT PRIMARY KEY, series_id TEXT, name TEXT NOT NULL, gender TEXT, role TEXT DEFAULT '',
+  notes TEXT DEFAULT '', color INTEGER DEFAULT 0, important INTEGER DEFAULT 1, auto INTEGER DEFAULT 0,
+  created REAL, updated REAL
+);
+CREATE TABLE IF NOT EXISTS cast_names (
+  character_uid TEXT, lang TEXT, name TEXT, PRIMARY KEY (character_uid, lang)
+);
+CREATE TABLE IF NOT EXISTS appearances (
+  source_id TEXT, label TEXT, character_uid TEXT, score REAL, status TEXT DEFAULT 'confirmed',
+  talk_s REAL DEFAULT 0, updated REAL, PRIMARY KEY (source_id, label)
+);
 CREATE TABLE IF NOT EXISTS takes (
   project_id TEXT, sentence_id INTEGER, job_id TEXT, take INTEGER, path TEXT, text TEXT,
   sim REAL, cer REAL, dur REAL, dur_s REAL, asr TEXT, chosen INTEGER DEFAULT 0, created REAL,
@@ -173,6 +187,20 @@ def _migrate_works(c: sqlite3.Connection) -> None:
     for table, key in (("series", "id"), ("projects", "id"), ("clips", "id"), ("collections", "id")):
         for (k,) in c.execute(f"SELECT {key} FROM {table} WHERE uid IS NULL").fetchall():
             c.execute(f"UPDATE {table} SET uid=? WHERE {key}=?", (new_uid(), k))
+    # Characters used to be diarizer labels inside one project. Each becomes a character
+    # of the project's work with a confirmed appearance, once (labels without one).
+    for pid, label, name, gender, important, color, talk in c.execute(
+            "SELECT ch.project_id, ch.label, ch.name, ch.gender, ch.important, ch.color, ch.talk_s FROM characters ch"
+            " JOIN projects p ON p.id=ch.project_id WHERE NOT EXISTS (SELECT 1 FROM appearances a"
+            " WHERE a.source_id=ch.project_id AND a.label=ch.label)").fetchall():
+        sid = c.execute("SELECT series_id FROM projects WHERE id=?", (pid,)).fetchone()[0]
+        uid = new_uid()
+        auto = int(not gender and (name or "").startswith("Speaker "))  # untouched by a person
+        c.execute("INSERT INTO cast (uid,series_id,name,gender,important,color,auto,created,updated)"
+                  " VALUES (?,?,?,?,?,?,?,?,?)", (uid, sid, name or label, gender, important if important is not None else 1,
+                                                 color or 0, auto, time.time(), time.time()))
+        c.execute("INSERT INTO appearances (source_id,label,character_uid,status,talk_s,updated)"
+                  " VALUES (?,?,?,'confirmed',?,?)", (pid, label, uid, talk or 0, time.time()))
 
 
 def _free_series_id(c: sqlite3.Connection, base: str) -> str:

@@ -14,7 +14,7 @@ import json
 import re
 import time
 
-from . import db, project
+from . import cast, db, project
 
 # kind → (what the series is called, what one source is called)
 KINDS = {
@@ -129,12 +129,13 @@ def attach(pid: str, sid: str | None) -> dict:
     old = project.get(pid)["series_id"]
     if sid is None:
         if not project.summary(pid)["standalone"]:
-            project.single_work(pid)
+            cast.move_source(pid, old, project.single_work(pid))
         return project.summary(pid)
     s = get(sid)
     db.run("UPDATE projects SET series_id=?, position=? WHERE id=?", sid, _next_position(sid), pid)
     db.run("UPDATE clips SET series_id=? WHERE source_id=?", sid, pid)
     if old != sid:
+        cast.move_source(pid, old, sid)  # its characters come along (and may match the series' cast)
         _drop_if_empty_single(old)
     for t in s["targets"]:
         project.add_target(pid, t)

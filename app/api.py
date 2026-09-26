@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import aligners, chapters, db, feeds, langs, library, mix, project, recurring, series, settings, tasks, voice
+from . import aligners, cast, chapters, db, feeds, langs, library, mix, project, recurring, series, settings, tasks, voice
 
 app = FastAPI(title="Lang-Bridge")
 WEB = Path(__file__).resolve().parents[1] / "web" / "dist"
@@ -591,7 +591,9 @@ def _energy(pid: str) -> np.ndarray | None:
 @app.get("/api/projects/{pid}/characters")
 def characters(pid: str):
     _p(pid)
-    chars = db.rows("SELECT * FROM characters WHERE project_id=? ORDER BY talk_s DESC", pid)
+    chars = cast.for_source(pid)
+    for c in chars:  # a proposed link shows who the voice sounds like, and the other options
+        c["matches"] = cast.matches(pid, c["label"])[:4]
     sents = project.sentences(pid)
     rms = _energy(pid)
     for c in chars:
@@ -622,14 +624,83 @@ class CharPatch(BaseModel):
     name: str | None = None
     gender: str | None = None
     important: bool | None = None
+    role: str | None = None
+    notes: str | None = None
 
 
 @app.patch("/api/projects/{pid}/characters/{label}")
 def patch_character(pid: str, label: str, body: CharPatch):
-    for k, v in body.model_dump(exclude_none=True).items():
-        db.run(f"UPDATE characters SET {k}=? WHERE project_id=? AND label=?", int(v) if isinstance(v, bool) else v,
-               pid, label)
-    return db.row("SELECT * FROM characters WHERE project_id=? AND label=?", pid, label)
+    """Edits the character this voice is: the change holds in every source it appears in."""
+    c = cast.character_of(pid, label)
+    if not c:
+        raise HTTPException(404, "no such speaker")
+    return cast.update(c["uid"], **body.model_dump(exclude_none=True))
+
+
+class LinkReq(BaseModel):
+    character_uid: str | None = None  # none = a character of its own
+
+
+@app.post("/api/projects/{pid}/characters/{label}/confirm")
+def confirm_character(pid: str, label: str):
+    try:
+        return cast.confirm(pid, label)
+    except KeyError:
+        raise HTTPException(404, "no such speaker")
+
+
+@app.post("/api/projects/{pid}/characters/{label}/link")
+def link_character(pid: str, label: str, body: LinkReq):
+    """Say who this voice is: a character of the work, or (none) a character of its own."""
+    try:
+        return cast.link(pid, label, body.character_uid) if body.character_uid else cast.detach(pid, label)
+    except KeyError:
+        raise HTTPException(404, "no such speaker or character")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/series/{sid}/cast")
+def work_cast(sid: str):
+    _s(sid)
+    return cast.of_work(sid)
+
+
+@app.patch("/api/cast/{uid}")
+def patch_cast(uid: str, body: CharPatch):
+    try:
+        return cast.update(uid, **body.model_dump(exclude_none=True))
+    except KeyError:
+        raise HTTPException(404, "no such character")
+
+
+class CastName(BaseModel):
+    name: str
+
+
+@app.put("/api/cast/{uid}/names/{lang}")
+def cast_name(uid: str, lang: str, body: CastName):
+    try:
+        return cast.set_name(uid, project.check_lang(lang), body.name)
+    except KeyError:
+        raise HTTPException(404, "no such character")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+class CastMerge(BaseModel):
+    into: str
+
+
+@app.post("/api/cast/{uid}/merge")
+def merge_cast(uid: str, body: CastMerge):
+    """Two characters of a work are one person."""
+    try:
+        return cast.merge(uid, body.into)
+    except KeyError:
+        raise HTTPException(404, "no such character")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 class Merge(BaseModel):
@@ -639,14 +710,13 @@ class Merge(BaseModel):
 
 @app.post("/api/projects/{pid}/characters/merge")
 def merge_characters(pid: str, body: Merge):
-    """Two clusters are one person: move every line and add up talk time."""
-    a = db.row("SELECT * FROM characters WHERE project_id=? AND label=?", pid, body.source)
-    b = db.row("SELECT * FROM characters WHERE project_id=? AND label=?", pid, body.into)
-    if not a or not b or a == b:
+    """Two clusters are one voice in this source: move every line and add up talk time."""
+    if body.source == body.into:
         raise HTTPException(400, "bad merge")
-    db.run("UPDATE sentences SET speaker=? WHERE project_id=? AND speaker=?", body.into, pid, body.source)
-    db.run("UPDATE characters SET talk_s=talk_s+? WHERE project_id=? AND label=?", a["talk_s"], pid, body.into)
-    db.run("DELETE FROM characters WHERE project_id=? AND label=?", pid, body.source)
+    try:
+        cast.merge_labels(pid, body.source, body.into)
+    except KeyError:
+        raise HTTPException(400, "bad merge")
     return {"ok": True}
 
 

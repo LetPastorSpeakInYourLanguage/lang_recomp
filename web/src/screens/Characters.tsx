@@ -1,4 +1,4 @@
-import { GitMerge, Star, Users } from "lucide-react";
+import { Check, GitMerge, Link2, Star, Users, X } from "lucide-react";
 import { useState } from "react";
 import { api, fmtTime, usePoll, type Character, type Project } from "../api";
 import { Button, Empty, Panel, PlayButton, Segmented, SpeakerDot, Tag } from "../ui";
@@ -13,6 +13,12 @@ export default function Characters({ project, onChanged }: { project: Project; o
   async function patch(c: Character, b: Partial<{ name: string; gender: string; important: boolean }>) {
     setData(chars.map((x) => (x.label === c.label ? { ...x, ...b, important: b.important === undefined ? x.important : Number(b.important) } : x)));
     await api.patchCharacter(project.id, c.label, b);
+    onChanged();
+  }
+
+  async function act(p: Promise<unknown>) {
+    await p;
+    await reload();
     onChanged();
   }
 
@@ -62,6 +68,19 @@ export default function Characters({ project, onChanged }: { project: Project; o
               </button>
             }>
             <div className="p-12 flex flex-col gap-10">
+              {c.status === "proposed" && (
+                <div className="border border-accent bg-soft rounded-3 px-8 py-6 flex items-center gap-6 flex-wrap text-11">
+                  <Link2 size={12} className="text-accent" />
+                  <span className="flex-1">Sounds like <b>{c.name}</b> from {c.elsewhere} other {c.elsewhere === 1 ? "video" : "videos"}
+                    {c.score != null && <span className="font-mono text-dim"> · {c.score.toFixed(2)}</span>}</span>
+                  <Button variant="primary" onClick={() => void act(api.confirmCharacter(project.id, c.label))}><Check size={11} />Yes, it's them</Button>
+                  <Button variant="ghost" onClick={() => void act(api.linkCharacter(project.id, c.label, null))}><X size={11} />Not them</Button>
+                </div>
+              )}
+              {c.status === "confirmed" && c.elsewhere > 0 && (
+                <div className="text-10.5 text-dim flex items-center gap-5"><Link2 size={11} className="text-accent" />
+                  Also in {c.elsewhere} other {c.elsewhere === 1 ? "video" : "videos"} of this work: name, gender and dub setting are shared.</div>
+              )}
               <div className="flex items-center gap-10 flex-wrap">
                 <Segmented value={c.gender as "female" | "male" | null} onChange={(g) => void patch(c, { gender: g })}
                   options={[{ value: "female", label: "Female" }, { value: "male", label: "Male" }]} />
@@ -86,6 +105,16 @@ export default function Characters({ project, onChanged }: { project: Project; o
                 </div>
               </div>
 
+              {c.matches.filter((m) => m.uid !== c.character_uid).length > 0 && (
+                <div className="flex items-center gap-6">
+                  <Link2 size={12} className="text-faint" />
+                  <span className="text-11 text-dim">This voice is</span>
+                  <select className="field flex-1" defaultValue="" onChange={(e) => { if (e.target.value) void act(api.linkCharacter(project.id, c.label, e.target.value)); e.target.value = ""; }}>
+                    <option value="">a character from other videos…</option>
+                    {c.matches.filter((m) => m.uid !== c.character_uid).map((m) => <option key={m.uid} value={m.uid}>{m.name} · {m.score.toFixed(2)}</option>)}
+                  </select>
+                </div>
+              )}
               {chars.length > 1 && (
                 <div className="flex items-center gap-6">
                   <GitMerge size={12} className="text-faint" />
