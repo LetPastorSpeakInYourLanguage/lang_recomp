@@ -1,7 +1,8 @@
 """App settings: which job folders exist, and which one new work goes to.
 
 A job folder is a root the job-bundle protocol runs in. "colab" folders are on
-Google Drive and served by lb_worker.ipynb; "local" folders are on this PC and
+Google Drive: runs there are only prepared, and a person runs them with
+colab/lang_bridge.ipynb (RUN_FOLDER); "local" folders are on this PC and
 served by Local-Worker.cmd. Every job row remembers its folder, so switching the
 active folder never loses track of work already submitted elsewhere.
 """

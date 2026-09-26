@@ -66,7 +66,10 @@ def export(sid: str, langs: list[str] | None = None, media: str = "opus", takes:
         put("work.json", {"format": FORMAT, "version": VERSION, "exported_at": time.time(), "note": note,
                           "media": media, "languages": langs,
                           "work": {k: w[k] for k in ("uid", "name", "kind", "src_lang", "targets", "feed_url", "rights", "settings")}
-                          | {"library": _library_of(sid)}})
+                          | {"library": _library_of(sid)},
+                          # where referenced media are, from this file: opened as it lies, no questions
+                          "ref_root": Path(os.path.relpath(Path(ref_root).resolve(), out.parent.resolve())).as_posix()
+                          if media == "ref" and ref_root is not None else None})
         for p in srcs:
             base, d = f"sources/{p['uid']}/", project.pdir(p["id"])
             meta = json.loads(p["meta"] or "{}")
@@ -199,6 +202,8 @@ def import_work(path: str | Path, fetch: bool = True, ref_root: Path | None = No
                  "clips": {"added": 0, "matched": 0}, "translations": {}, "fetching": [], "notes": []}
     with zipfile.ZipFile(path) as z, tempfile.TemporaryDirectory() as tmp:
         wj = _manifest(z)
+        if ref_root is None and wj.get("ref_root"):  # a results package opened where it was written
+            ref_root = Path(os.path.normpath(Path(path).resolve().parent / wj["ref_root"]))
         w = wj["work"]
         names = z.namelist()
         here = db.row("SELECT id FROM series WHERE uid=?", w["uid"])

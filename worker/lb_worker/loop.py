@@ -234,7 +234,7 @@ class Worker:
             self.current = None
 
     def code_version(self) -> str:
-        """Stamp written by scripts/sync_worker.py each time new code is published."""
+        """Stamp of the published worker code (worker/VERSION), if any."""
         try:
             return (self.layout.root / "worker" / "VERSION").read_text().strip()
         except OSError:
