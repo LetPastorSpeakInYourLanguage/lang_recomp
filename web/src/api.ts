@@ -16,7 +16,10 @@ export interface Project {
   id: string; name: string; source: string; src_lang: string; tgt_lang: string;
   max_speakers: number | null; clip_start: number | null; clip_end: number | null; duration: number | null;
   created: number;
-  counts: { sentences: number; translated: number; reviewed: number; chapters: number; characters: number; genders_set: number };
+  counts: { sentences: number; translated: number; translated_by_lang: Record<string, number>; reviewed: number; chapters: number;
+    characters: number; genders_set: number; kept: number };
+  /** target languages, primary first */
+  targets: string[];
   analysis: Record<"separate" | "asr" | "diarize", string | null>;
   import: Task | null;
   meta: Record<string, unknown>;
@@ -33,24 +36,26 @@ export interface Take {
 }
 export interface VoiceLine extends Sentence { takes: Take[] }
 export interface VoiceState {
-  lines: VoiceLine[]; jobs: Job[]; engine: { model: string; steps: number; speed: number; takes: number }; am_rate: number | null;
+  lines: VoiceLine[]; jobs: Job[]; engine: { model: string; steps: number; speed: number; takes: number }; rate: number | null; lang: string;
 }
 
 export interface MixParams { duck_db: number; keep_nonspeech: boolean; nonspeech_db: number; keep_extras: boolean; max_stretch: number; hard_stretch: number; loudness_follow: boolean }
 export interface FitLine {
   id: number; start: number; end: number; factor: number; status: "fits" | "borrowed" | "stretched" | "squeezed" | "overflow";
-  slot_start: number; slot_end: number; dur: number; overlap_s: number; speaker: string | null; gain_db: number; am: string; en: string; take_id: number;
+  slot_start: number; slot_end: number; dur: number; overlap_s: number; speaker: string | null; gain_db: number; tr: string; src: string; take_id: number;
 }
 export interface MixState {
   params: MixParams; defaults: MixParams; has_mix: boolean; mix_mtime: number | null;
   summary: { rendered_at: number; duration: number; lines: FitLine[]; counts: Record<string, number>; missing: { id: number; start: number; en: string }[] } | null;
-  export: { mp4: string; at: number } | null; tasks: Task[];
+  lang: string; export: { mp4: string; at: number } | null; tasks: Task[];
 }
 
 export interface Budget { syllables: number; est_s: number; slot_s: number; ratio: number | null; max_syllables: number }
 export interface Sentence {
   id: number; speaker: string | null; start: number; end: number; slot_s: number; text: string;
-  am: string; am_locked: number; chapter_break: number; reviewed: number; budget: Budget | null;
+  /** translation into `lang` */
+  lang: string; tr: string; tr_locked: number; tr_provenance: "machine" | "human" | "reviewed" | null;
+  chapter_break: number; reviewed: number; budget: Budget | null;
   /** effective: the person's choice, else the interjection suggestion */
   mode: "dub" | "keep"; mode_set: "dub" | "keep" | null; mode_suggested: "dub" | "keep";
 }
@@ -90,24 +95,30 @@ export const api = {
   patchCharacter: (p: string, label: string, b: Partial<{ name: string; gender: string; important: boolean }>) =>
     req("PATCH", `/api/projects/${p}/characters/${label}`, b),
   merge: (p: string, source: string, into: string) => req("POST", `/api/projects/${p}/characters/merge`, { source, into }),
-  sentences: (p: string) => req<Sentence[]>("GET", `/api/projects/${p}/sentences`),
-  patchSentence: (p: string, id: number, b: Partial<{ text: string; speaker: string; am: string; am_locked: boolean; chapter_break: boolean; reviewed: boolean; mode: "dub" | "keep" | "auto" }>) =>
+  sentences: (p: string, lang?: string) =>
+    req<Sentence[]>("GET", `/api/projects/${p}/sentences${lang ? `?lang=${encodeURIComponent(lang)}` : ""}`),
+  patchSentence: (p: string, id: number, b: Partial<{ text: string; speaker: string; lang: string; tr: string; tr_locked: boolean; chapter_break: boolean; reviewed: boolean;
+    mode: "dub" | "keep" | "auto" }>) =>
     req<Sentence>("PATCH", `/api/projects/${p}/sentences/${id}`, b),
   mergeNext: (p: string, id: number) => req<{ kept: number; removed: number }>("POST", `/api/projects/${p}/sentences/${id}/merge_next`),
   split: (p: string, id: number, word_index: number) =>
     req<{ first: number; second: number }>("POST", `/api/projects/${p}/sentences/${id}/split`, { word_index }),
-  voice: (p: string) => req<VoiceState>("GET", `/api/projects/${p}/voice`),
-  queueVoice: (p: string, b: { root?: string; ids?: number[]; takes?: number }) =>
+  voice: (p: string, lang: string) => req<VoiceState>("GET", `/api/projects/${p}/voice?lang=${encodeURIComponent(lang)}`),
+  queueVoice: (p: string, b: { root?: string; ids?: number[]; takes?: number; lang?: string }) =>
     req<{ job: string; lines: number; root: string }>("POST", `/api/projects/${p}/voice`, b),
   chooseTake: (p: string, take_id: number) => req("POST", `/api/projects/${p}/voice/choose`, { take_id }),
   takeUrl: (p: string, take_id: number) => `/api/projects/${p}/takes/${take_id}`,
-  mix: (p: string) => req<MixState>("GET", `/api/projects/${p}/mix`),
+  mix: (p: string, lang: string) => req<MixState>("GET", `/api/projects/${p}/mix?lang=${encodeURIComponent(lang)}`),
   mixParams: (p: string, b: Partial<MixParams>) => req<MixParams>("PUT", `/api/projects/${p}/mix/params`, b),
-  renderMix: (p: string) => req<{ task: string }>("POST", `/api/projects/${p}/mix/render`),
-  exportMix: (p: string) => req<{ task: string }>("POST", `/api/projects/${p}/mix/export`),
+  renderMix: (p: string, lang: string) => req<{ task: string }>("POST", `/api/projects/${p}/mix/render`, { lang }),
+  exportMix: (p: string, lang: string) => req<{ task: string }>("POST", `/api/projects/${p}/mix/export`, { lang }),
   openExport: (p: string) => req("POST", `/api/projects/${p}/mix/open`),
-  mixAudio: (p: string, name: "mix" | "dub", v: number | null) => `/api/projects/${p}/mix/audio/${name}?v=${v ?? 0}`,
-  translate: (p: string, chapter?: number, force = false) => req<{ task: string }>("POST", `/api/projects/${p}/translate`, { chapter, force }),
+  mixAudio: (p: string, name: "mix" | "dub", v: number | null, lang: string) =>
+    `/api/projects/${p}/mix/audio/${name}?lang=${encodeURIComponent(lang)}&v=${v ?? 0}`,
+  languages: () => req<{ code: string; name: string; iso3: string; script: string }[]>("GET", "/api/languages"),
+  addLanguage: (p: string, lang: string) => req<{ targets: string[] }>("POST", `/api/projects/${p}/languages`, { lang }),
+  translate: (p: string, lang: string, chapter?: number, force = false) =>
+    req<{ task: string }>("POST", `/api/projects/${p}/translate`, { chapter, force, lang }),
   media: (p: string, name: "video" | "audio" | "vocals" | "background") => `/api/projects/${p}/media/${name}`,
 };
 

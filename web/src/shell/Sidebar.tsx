@@ -30,7 +30,7 @@ export default function Sidebar({ projects, project, screen }: { projects: Proje
               style={{ borderLeftColor: on ? "var(--accent)" : "transparent" }}
               className={`w-full text-left border-0 border-l-2 pl-10 pr-12 py-5 flex flex-col ${on ? "bg-sel" : "bg-transparent hover:bg-panel3"}`}>
               <span className={`text-12 whitespace-nowrap overflow-hidden text-ellipsis ${on ? "font-semibold" : "text-dim"}`}>{p.name}</span>
-              <span className="text-9.5 font-mono text-faint">{p.src_lang}→{p.tgt_lang} · {fmtTime(p.duration)} · {p.counts.sentences} lines</span>
+              <span className="text-9.5 font-mono text-faint">{p.src_lang}→{(p.targets ?? [p.tgt_lang]).join(",")} · {fmtTime(p.duration)} · {p.counts.sentences} lines</span>
             </button>
           );
         })}
