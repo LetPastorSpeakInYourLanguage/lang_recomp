@@ -35,7 +35,7 @@ export default function Characters({ project, onChanged }: { project: Project; o
         <div className="flex-1 min-w-[280px]">
           <div className="text-15 font-semibold">Who is speaking?</div>
           <div className="text-11.5 text-dim">
-            Name each voice, set its gender (it picks the Amharic verb forms and the fallback voice), and star the characters that need a dub.
+            Name each voice, set its gender (it picks gendered word forms in languages that have them, like Amharic, and the fallback voice), and star the characters that need a dub.
             Samples run from each person's quietest line to their most animated one.
           </div>
         </div>

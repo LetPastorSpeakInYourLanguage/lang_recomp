@@ -94,7 +94,7 @@ export default function Mix({ project, onChanged }: { project: Project; onChange
       ) : (
         <div className="grid grid-cols-[minmax(0,1.3fr)_minmax(280px,1fr)] gap-12 max-lg:grid-cols-1">
           <Panel title="Preview" actions={<Segmented<Listen> value={listen} onChange={setListen}
-            options={[{ value: "mix", label: "Amharic mix" }, { value: "dub", label: "Dub only" }, { value: "original", label: "Original" }]} />}>
+            options={[{ value: "mix", label: `${langName(lang)} mix` }, { value: "dub", label: "Dub only" }, { value: "original", label: "Original" }]} />}>
             <div className="p-10">
               <video ref={video} src={api.media(project.id, "video")} controls className="w-full rounded-3 bg-black aspect-video" />
               <audio ref={audio} src={api.mixAudio(project.id, listen === "dub" ? "dub" : "mix", data.mix_mtime, lang)} preload="auto" />

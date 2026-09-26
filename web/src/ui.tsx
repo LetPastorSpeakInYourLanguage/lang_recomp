@@ -93,7 +93,7 @@ export function ModeToggle({ mode, set, suggested, onChange }: {
       <div className="inline-flex border border-border2 rounded-3 overflow-hidden h-20">
         {(["dub", "keep"] as const).map((m, i) => (
           <button key={m} onClick={(e) => { e.stopPropagation(); onChange(m); }}
-            title={m === "dub" ? "Dub this line in Amharic" : "Keep the original voice for this line (short interjections read fine in any language)"}
+            title={m === "dub" ? "Dub this line in the target language" : "Keep the original voice for this line (short interjections read fine in any language)"}
             className={`px-6 text-10 ${i ? "border-l border-border2" : ""} ${mode === m ? (m === "keep" ? "bg-cross text-white" : "bg-accent text-white") : "bg-panel text-dim hover:bg-panel3"}`}>
             {m === "dub" ? "Dub" : "Keep original"}
           </button>

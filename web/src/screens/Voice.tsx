@@ -25,7 +25,6 @@ export default function Voice({ project, state, onChanged }: { project: Project;
   if (!lines.length) {
     return (
       <div className="p-16 max-w-[1280px] mx-auto w-full flex flex-col gap-12">
-      {bar}
         {bar}
         <Empty icon={<AudioLines size={28} />} title={`Nothing to voice in ${langName(lang)} yet`}>
           Translate the lines first (Translate), and make sure the speakers are marked as needing a dub (Characters).
@@ -65,12 +64,13 @@ export default function Voice({ project, state, onChanged }: { project: Project;
   const e = data.engine;
   return (
     <div className="p-16 max-w-[1280px] mx-auto w-full flex flex-col gap-12">
+      {bar}
       <div className="flex items-center gap-10 flex-wrap">
         <div className="flex-1 min-w-[300px]">
           <div className="text-15 font-semibold">Voice · {langName(lang)}</div>
           <div className="text-11.5 text-dim">
             Each line is spoken in its speaker's cloned voice, {e.takes} takes per line. Every take is scored for likeness to the
-            speaker, how clearly the Amharic comes through, and fit to the original timing; the best is picked for you. Listen, swap
+            speaker, how clearly the {langName(lang)} comes through, and fit to the original timing; the best is picked for you. Listen, swap
             takes, regenerate.
           </div>
         </div>
@@ -161,7 +161,7 @@ function TakeChip({ t, project, slot, onChoose }: { t: Take; project: Project; s
       <span className={`text-10 font-mono ${tone((t.sim ?? 0) >= 0.85, (t.sim ?? 0) >= 0.75)}`} title="voice likeness (0–1)">
         sim {t.sim?.toFixed(2) ?? "–"}
       </span>
-      <span className={`text-10 font-mono ${tone((t.cer ?? 1) <= 0.12, (t.cer ?? 1) <= 0.25)}`} title="Amharic character error rate when transcribed back">
+      <span className={`text-10 font-mono ${tone((t.cer ?? 1) <= 0.12, (t.cer ?? 1) <= 0.25)}`} title="character error rate when the take is transcribed back (– when the language has no aligner)">
         CER {t.cer != null ? `${Math.round(t.cer * 100)}%` : "–"}
       </span>
       <span className={`text-10 font-mono ${tone(fit <= 1.1, fit <= 1.3)}`} title={`${t.dur_s?.toFixed(1) ?? "?"}s for a ${slot.toFixed(1)}s slot`}>

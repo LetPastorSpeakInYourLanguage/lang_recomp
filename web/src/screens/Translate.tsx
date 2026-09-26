@@ -57,7 +57,7 @@ export default function Translate({ project, state, onChanged }: { project: Proj
           </div>
         </div>
         <Tag tone={done === rows.length ? "good" : "neutral"}>{done}/{rows.length} translated</Tag>
-        {over > 0 && <Tag tone="warn" title="Estimated Amharic length is over 125% of the source slot">{over} too long</Tag>}
+        {over > 0 && <Tag tone="warn" title={`Estimated ${langName(lang)} length is over 125% of the source slot`}>{over} too long</Tag>}
         {err && <span className="text-11 text-bad">{err}</span>}
         <Button variant="primary" disabled={running} onClick={() => void translate()}>
           <RefreshCw size={11} className={running ? "animate-spin" : ""} />{running ? "Translating…" : done ? "Re-translate unlocked" : "Translate all"}
