@@ -305,9 +305,9 @@ class Run:
             if aligner and (pid not in subs or align_subs):
                 align_doc(doc, audios[pid], SR, aligner, repo, lambda *_: None)
                 doc["aligned"] = True
-            cap = A.db.meta(pid).get("captions")
-            if cap and Path(cap["path"]).exists():  # the captions trial: kept beside, compared later
-                raw = A.captions.load(Path(cap["path"]).read_text(encoding="utf-8", errors="replace"), self.man.get("src_lang"))
+            cap = self._caption_file(pid)
+            if cap:  # the captions trial: kept beside, compared later
+                raw = A.captions.load(cap.read_text(encoding="utf-8", errors="replace"), self.man.get("src_lang"))
                 _dump(dest / "captions_raw.json", raw)
                 if aligner and pid in align_trial:
                     al = json.loads(json.dumps(raw))
@@ -348,19 +348,35 @@ class Run:
             if c["auto"]:
                 A.cast.update(c["uid"], name=names[0])
 
+    def _caption_file(self, pid: str) -> Path | None:
+        """The trial's YouTube captions for a video, if it has them. The file is the truth:
+        a restarted run rebuilds its catalogue and skips fetching what is already there."""
+        cap = self.app.db.meta(pid).get("captions")
+        for f in ([Path(cap["path"])] if cap else []) + [self.app.project.media_dir(pid) / "captions.vtt"]:
+            if f.exists():
+                return f
+        return None
+
     def _report(self) -> None:
         """Captions vs Whisper for the trial videos (raw and aligned captions)."""
         A, rows = self.app, []
         for pid in self.pids:
             d = A.project.media_dir(pid)
-            if not (d / "captions_raw.json").exists() or not (d / "whisper.json").exists():
+            wf = d / "whisper.json" if (d / "whisper.json").exists() else d / "asr_spk.json"
+            cap = self._caption_file(pid)
+            if not wf.exists() or not ((d / "captions_raw.json").exists() or cap):
                 continue
-            wh = json.loads((d / "whisper.json").read_text(encoding="utf-8"))
+            wh = json.loads(wf.read_text(encoding="utf-8"))
+            if wh.get("source") == "subtitles":
+                continue
             row = {"video": A.project.get(pid)["name"], "kind": (A.db.meta(pid).get("captions") or {}).get("kind")}
             for name in ("captions_raw", "captions_aligned"):
                 f = d / f"{name}.json"
                 if f.exists():
                     row[name] = compare(wh, json.loads(f.read_text(encoding="utf-8")))
+                elif name == "captions_raw" and cap:
+                    row[name] = compare(wh, A.captions.load(cap.read_text(encoding="utf-8", errors="replace"),
+                                                            self.man.get("src_lang")))
             rows.append(row)
         _dump(self.dir / "report.json", {"run": self.id, "captions": rows})
 
