@@ -1,5 +1,6 @@
 import { api, usePoll } from "./api";
 import { useRoute } from "./router";
+import Cast from "./screens/Cast";
 import Characters from "./screens/Characters";
 import Clips from "./screens/Clips";
 import Home from "./screens/Home";
@@ -26,6 +27,7 @@ export default function App() {
 
   let body;
   if (route.settings) body = <Settings state={state.data} onSaved={() => void state.reload()} />;
+  else if (route.cast) body = <Cast key={route.cast} id={route.cast} />;
   else if (route.clips) body = <Clips seriesId={route.clips.series} series={seriesList} projects={list} />;
   else if (route.series) body = <Series key={route.series} id={route.series} onChanged={refresh} />;
   else if (!route.project || (!project && projects.data)) body = <Home projects={list} series={seriesList} reload={refresh} />;

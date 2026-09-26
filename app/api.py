@@ -160,7 +160,7 @@ class NewSource(BaseModel):
 
 @app.get("/api/series/kinds")
 def series_kinds():
-    return [{"kind": k, "label": v[0], "unit": v[1]} for k, v in series.KINDS.items()]
+    return [{"kind": k, "label": v[0], "unit": v[1]} for k, v in series.KINDS.items() if k != "single"]
 
 
 @app.get("/api/series")

@@ -12,6 +12,7 @@ const KIND_HINT: Record<SeriesKind, string> = {
   course: "lessons from an education channel",
   news: "news segments with recurring anchors",
   other: "any group of videos worked on together",
+  single: "a standalone video",
 };
 
 const codes = (v: string) => v.split(/[\s,]+/).map((x) => x.trim().toLowerCase()).filter(Boolean);

@@ -1,7 +1,7 @@
-import { ArrowDown, ArrowUp, Bookmark, Library, ListVideo, LogOut, Repeat } from "lucide-react";
+import { ArrowDown, ArrowUp, Bookmark, Library, ListVideo, LogOut, Repeat, Users } from "lucide-react";
 import { useState } from "react";
 import { api, fmtTime, parseTime, usePoll, type ClipKind, type FeedEntry, type PartCandidate } from "../api";
-import { go, goClips } from "../router";
+import { go, goCast, goClips } from "../router";
 import VideoForm, { LangOptions } from "../shell/VideoForm";
 import { Button, Empty, Panel, PlayButton, Tag, stateTone } from "../ui";
 
@@ -40,6 +40,7 @@ export default function Series({ id, onChanged }: { id: string; onChanged: () =>
             <Field value={d.name} onSave={(v) => v.trim() && void save({ name: v })} className="text-15 font-semibold" />
             <Tag>{d.label}</Tag>
             <span className="flex-1" />
+            <Button onClick={() => goCast(id)}><Users size={12} />Cast</Button>
             <Button onClick={() => goClips(id)}><Bookmark size={12} />Clips from this series</Button>
           </div>
           <div className="text-11.5 text-dim">

@@ -29,7 +29,7 @@ export interface Project {
   meta: Record<string, unknown>;
 }
 
-export type SeriesKind = "show" | "channel" | "speaker" | "course" | "news" | "other";
+export type SeriesKind = "show" | "channel" | "speaker" | "course" | "news" | "other" | "single";  // single: a standalone video's own work
 export interface Series {
   id: string; name: string; kind: SeriesKind; feed_url: string | null; src_lang: string; targets: string[];
   settings: { max_speakers?: number | null }; created: number;
@@ -193,6 +193,14 @@ export const api = {
   patchCast: (uid: string, b: Partial<{ name: string; gender: string; important: boolean; role: string; notes: string }>) =>
     req<CastMember>("PATCH", `/api/cast/${uid}`, b),
   castName: (uid: string, lang: string, name: string) => req<CastMember>("PUT", `/api/cast/${uid}/names/${lang}`, { name }),
+  bank: (uid: string) => req<{
+    rows: { source_id: string; source_name: string | null; line_id: number; start: number; end: number; text: string; role: "bank" | "heldout" | "excluded"; manual: number }[];
+    candidates: { source_id: string; source_name: string | null; id: number; start: number; end: number; text: string; secs: number; clean: boolean }[];
+  }>("GET", `/api/cast/${uid}/bank`),
+  rebuildBank: (uid: string) => req("POST", `/api/cast/${uid}/bank/rebuild`),
+  pinBank: (uid: string, source_id: string, line_id: number, role: "bank" | "heldout" | "excluded") =>
+    req("PUT", `/api/cast/${uid}/bank`, { source_id, line_id, role }),
+  bankAudio: (uid: string, source_id: string, line_id: number) => `/api/cast/${uid}/bank/${source_id}/${line_id}`,
   mergeCast: (uid: string, into: string) => req<CastMember>("POST", `/api/cast/${uid}/merge`, { into }),
   sentences: (p: string, lang?: string) =>
     req<Sentence[]>("GET", `/api/projects/${p}/sentences${lang ? `?lang=${encodeURIComponent(lang)}` : ""}`),

@@ -24,6 +24,7 @@ KINDS = {
     "course": ("Course", "lesson"),
     "news": ("News programme", "segment"),
     "other": ("Collection", "video"),
+    "single": ("Video", "video"),  # a standalone video's own work: made by the app, never chosen
 }
 SETTINGS = ("max_speakers",)  # per-series defaults a new source takes
 
@@ -37,8 +38,8 @@ def _slug(name: str) -> str:
 
 
 def _check(kind: str | None, targets: list[str] | None) -> None:
-    if kind is not None and kind not in KINDS:  # 'single' is made by the app, never chosen
-        raise ValueError(f"kind must be one of {', '.join(KINDS)}")
+    if kind is not None and (kind not in KINDS or kind == "single"):  # 'single' is made by the app, never chosen
+        raise ValueError(f"kind must be one of {', '.join(k for k in KINDS if k != 'single')}")
     if targets is not None:
         if not targets:
             raise ValueError("a series needs at least one target language")

@@ -1,6 +1,7 @@
 import { Check, GitMerge, Link2, Star, Users, X } from "lucide-react";
 import { useState } from "react";
 import { api, fmtTime, usePoll, type Character, type Project } from "../api";
+import { goCast } from "../router";
 import { Button, Empty, Panel, PlayButton, Segmented, SpeakerDot, Tag } from "../ui";
 
 type Src = "vocals" | "audio";
@@ -46,6 +47,7 @@ export default function Characters({ project, onChanged }: { project: Project; o
           </div>
         </div>
         {missing > 0 ? <Tag tone="warn">{missing} without gender</Tag> : <Tag tone="good">all genders set</Tag>}
+        {project.series_id && <Button onClick={() => goCast(project.series_id!)}><Users size={12} />Whole cast</Button>}
         <Segmented<Src> value={src} onChange={setSrc} options={[{ value: "vocals", label: "Voice only" }, { value: "audio", label: "Original mix" }]} />
       </div>
 
