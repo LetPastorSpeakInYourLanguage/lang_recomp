@@ -109,7 +109,9 @@ class NewProject(BaseModel):
 
 @app.get("/api/projects")
 def list_projects():
-    return [project.summary(p["id"]) for p in db.rows("SELECT id FROM projects ORDER BY created DESC")]
+    """Brief rows for lists (library videos are explored per library); the open project's
+    full summary is GET /api/projects/{pid}."""
+    return project.briefs()
 
 
 @app.post("/api/projects")

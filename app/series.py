@@ -83,15 +83,15 @@ def update(sid: str, **changes) -> dict:
 
 
 def sources(sid: str) -> list[dict]:
-    """The series' sources in their order, as project summaries."""
-    return [project.summary(r["id"]) for r in
-            db.rows("SELECT id FROM projects WHERE series_id=? ORDER BY position, created", sid)]
+    """The series' sources in their order (brief rows: a series can hold hundreds)."""
+    return sorted(project.briefs("p.series_id=?", sid), key=lambda p: (p["position"] or 0, p["created"]))
 
 
 def listing() -> list[dict]:
-    """The series people made (not the hidden single-source works of standalone videos)."""
+    """The series people made (not the hidden single-source works of standalone videos,
+    nor the works of library folders, which are explored per library)."""
     out = []
-    for r in db.rows("SELECT id FROM series WHERE kind<>'single' ORDER BY created DESC"):
+    for r in db.rows("SELECT id FROM series WHERE kind<>'single' AND library_id IS NULL ORDER BY created DESC"):
         s = get(r["id"])
         srcs = db.rows("SELECT id, duration FROM projects WHERE series_id=?", s["id"])
         s["counts"] = {"sources": len(srcs), "duration": sum(x["duration"] or 0 for x in srcs)}

@@ -451,6 +451,34 @@ def set_translation(pid: str, sid: int, lang: str, text: str | None = None, lock
     return True
 
 
+def briefs(where: str = "s.library_id IS NULL", *args) -> list[dict]:
+    """Every project in a few grouped queries — what lists and the sidebar need (full
+    counts come from ``summary`` for the project that is open). By default library
+    videos are left out: they are explored per library."""
+    rows = db.rows("SELECT p.id, p.name, p.source, p.src_lang, p.tgt_lang, p.duration, p.series_id, p.position,"
+                   " p.clip_start, p.clip_end, p.max_speakers,"
+                   " p.origin_id, p.uid, p.created, p.meta, s.kind AS series_kind FROM projects p"
+                   f" LEFT JOIN series s ON s.id=p.series_id WHERE {where} ORDER BY p.created DESC", *args)
+    lines = {r["project_id"]: r for r in db.rows(
+        "SELECT project_id, COUNT(*) n, SUM(reviewed) rv FROM sentences GROUP BY project_id")}
+    tr: dict[str, dict] = {}
+    for r in db.rows("SELECT project_id, lang, COUNT(*) n FROM translations WHERE text<>'' GROUP BY project_id, lang"):
+        tr.setdefault(r["project_id"], {})[r["lang"]] = r["n"]
+    chars = {r["source_id"]: r["n"] for r in db.rows("SELECT source_id, COUNT(*) n FROM appearances GROUP BY source_id")}
+    out = []
+    for p in rows:
+        meta = json.loads(p.pop("meta") or "{}")
+        targets = [p["tgt_lang"], *[t for t in meta.get("targets", []) if t != p["tgt_lang"]]]
+        n = lines.get(p["id"], {})
+        by = tr.get(p["id"], {})
+        out.append(p | {"targets": targets, "standalone": p.pop("series_kind") in (None, "single"), "meta": {},
+                        "analysis": {"separate": None, "asr": None, "diarize": None}, "import": None,
+                        "counts": {"sentences": n.get("n") or 0, "reviewed": n.get("rv") or 0,
+                                   "translated": by.get(p["tgt_lang"], 0), "translated_by_lang": {t: by.get(t, 0) for t in targets},
+                                   "characters": chars.get(p["id"], 0), "genders_set": 0, "kept": 0, "linked": 0, "chapters": 0}})
+    return out
+
+
 def summary(pid: str) -> dict:
     p = get(pid)
     n = db.row("SELECT COUNT(*) n, SUM(reviewed) rv FROM sentences WHERE project_id=?", pid)
