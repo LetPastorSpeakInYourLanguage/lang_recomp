@@ -24,7 +24,10 @@ import numpy as np
 
 from . import db
 
-MATCH = 0.45        # cosine of centroid embeddings: same voice ≳0.6, different voices ≈0.1 (camille)
+# Cosine of the diarizer's centroid embeddings. Measured: Neil in two 6 Minute English
+# episodes 0.72; two different female presenters (Georgie vs Pippa) 0.45; camille's two
+# speakers 0.10. Above this a voice is *proposed* as the character, never linked.
+MATCH = 0.55
 PALETTE = 8
 STATUSES = ("proposed", "confirmed")
 EDITABLE = ("name", "gender", "important", "role", "notes")
