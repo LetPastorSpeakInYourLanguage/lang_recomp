@@ -20,7 +20,7 @@ export default function Home({ projects, series, reload }: { projects: Project[]
   const [adding, setAdding] = useState(false);
   const [src, setSrc] = useState("en");
   const [tgt, setTgt] = useState("am");
-  const standalone = projects.filter((p) => !p.series_id);
+  const standalone = projects.filter((p) => p.standalone);
 
   return (
     <div className="p-16 max-w-[1100px] mx-auto w-full flex flex-col gap-14">

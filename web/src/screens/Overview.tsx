@@ -73,7 +73,9 @@ export default function Overview({ project, state, onChanged }: { project: Proje
           <Step icon={<HardDrive size={13} />} title="Import" where="this PC"
             state={importTask ? importTask.state : project.duration ? "done" : null}
             note={importTask?.state === "running" ? importTask.note : importTask?.error ?? (project.duration ? `${fmtTime(project.duration)} clip` : "")}
-            progress={importTask?.state === "running" ? importTask.progress : undefined} />
+            progress={importTask?.state === "running" ? importTask.progress : undefined}
+            action={importTask?.state === "failed" && <Button onClick={async () => { await api.retryImport(project.id); void reload(); }}>
+              <RefreshCw size={11} />Try again</Button>} />
           {(["separate", "asr", "diarize"] as const).map((s, i) => {
             const j = analysis[i];
             return (
@@ -162,7 +164,9 @@ function resultNote(stage: string, j: Job | undefined): string | null {
   return null;
 }
 
-function Step({ icon, title, where, state, note, progress }: { icon: React.ReactNode; title: string; where: string; state: string | null; note?: string | null; progress?: number }) {
+function Step({ icon, title, where, state, note, progress, action }: {
+  icon: React.ReactNode; title: string; where: string; state: string | null; note?: string | null; progress?: number; action?: React.ReactNode;
+}) {
   return (
     <div className="p-12 border-r border-border last:border-r-0 flex flex-col gap-6 min-w-0">
       <div className="flex items-center gap-6 text-dim">{icon}<span className="text-9.5 uppercase tracking-label">{where}</span>
@@ -170,6 +174,7 @@ function Step({ icon, title, where, state, note, progress }: { icon: React.React
       <div className="text-12 font-medium">{title}</div>
       {progress !== undefined && <Progress value={progress} />}
       <div className="text-10.5 text-faint font-mono truncate" title={note ?? ""}>{note || " "}</div>
+      {action && <div>{action}</div>}
     </div>
   );
 }

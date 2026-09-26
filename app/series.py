@@ -37,7 +37,7 @@ def _slug(name: str) -> str:
 
 
 def _check(kind: str | None, targets: list[str] | None) -> None:
-    if kind is not None and kind not in KINDS:
+    if kind is not None and kind not in KINDS:  # 'single' is made by the app, never chosen
         raise ValueError(f"kind must be one of {', '.join(KINDS)}")
     if targets is not None:
         if not targets:
@@ -52,9 +52,9 @@ def create(name: str, kind: str = "other", src_lang: str = "en", targets: list[s
     _check(kind, targets)
     project.check_lang(src_lang)
     sid = _slug(name)
-    db.run("INSERT INTO series (id,name,kind,feed_url,src_lang,targets,settings,created) VALUES (?,?,?,?,?,?,?,?)",
+    db.run("INSERT INTO series (id,name,kind,feed_url,src_lang,targets,settings,created,uid) VALUES (?,?,?,?,?,?,?,?,?)",
            sid, name.strip(), kind, (feed_url or "").strip() or None, src_lang, json.dumps(targets),
-           json.dumps({k: v for k, v in (settings or {}).items() if k in SETTINGS}), time.time())
+           json.dumps({k: v for k, v in (settings or {}).items() if k in SETTINGS}), time.time(), db.new_uid())
     return get(sid)
 
 
@@ -88,8 +88,9 @@ def sources(sid: str) -> list[dict]:
 
 
 def listing() -> list[dict]:
+    """The series people made (not the hidden single-source works of standalone videos)."""
     out = []
-    for r in db.rows("SELECT id FROM series ORDER BY created DESC"):
+    for r in db.rows("SELECT id FROM series WHERE kind<>'single' ORDER BY created DESC"):
         s = get(r["id"])
         srcs = db.rows("SELECT id, duration FROM projects WHERE series_id=?", s["id"])
         s["counts"] = {"sources": len(srcs), "duration": sum(x["duration"] or 0 for x in srcs)}
@@ -115,15 +116,26 @@ def add_source(sid: str, name: str, source: str, clip_start: float | None = None
     return project.summary(p["id"])
 
 
+def _drop_if_empty_single(sid: str | None) -> None:
+    w = db.row("SELECT kind FROM series WHERE id=?", sid) if sid else None
+    if w and w["kind"] == "single" and not db.row("SELECT 1 FROM projects WHERE series_id=?", sid):
+        db.run("DELETE FROM series WHERE id=?", sid)
+
+
 def attach(pid: str, sid: str | None) -> dict:
-    """Move an existing project into a series (at the end) or back out to standalone.
-    Its languages stay its own; the series' targets are added to it."""
-    project.get(pid)
+    """Move an existing project into a series (at the end), or back out to standalone
+    (its own single-source work). Its clips move with it. Its languages stay its own;
+    the series' targets are added to it."""
+    old = project.get(pid)["series_id"]
     if sid is None:
-        db.run("UPDATE projects SET series_id=NULL, position=NULL WHERE id=?", pid)
+        if not project.summary(pid)["standalone"]:
+            project.single_work(pid)
         return project.summary(pid)
     s = get(sid)
     db.run("UPDATE projects SET series_id=?, position=? WHERE id=?", sid, _next_position(sid), pid)
+    db.run("UPDATE clips SET series_id=? WHERE source_id=?", sid, pid)
+    if old != sid:
+        _drop_if_empty_single(old)
     for t in s["targets"]:
         project.add_target(pid, t)
     return project.summary(pid)
@@ -133,10 +145,11 @@ def remove(sid: str) -> int:
     """Remove the series itself. Its sources are kept and become standalone videos.
     Returns how many sources were released."""
     get(sid)
-    n = len(db.rows("SELECT id FROM projects WHERE series_id=?", sid))
-    db.run("UPDATE projects SET series_id=NULL, position=NULL WHERE series_id=?", sid)
+    ids = [r["id"] for r in db.rows("SELECT id FROM projects WHERE series_id=?", sid)]
+    for pid in ids:
+        attach(pid, None)
     db.run("DELETE FROM series WHERE id=?", sid)
-    return n
+    return len(ids)
 
 
 def reorder(sid: str, ids: list[str]) -> list[dict]:

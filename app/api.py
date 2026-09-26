@@ -493,6 +493,16 @@ def attach_project(pid: str, body: Attach):
     return series.attach(pid, body.series_id)
 
 
+@app.post("/api/projects/{pid}/import")
+def retry_import(pid: str):
+    """Try a failed download/import again."""
+    _p(pid)
+    try:
+        return {"task": project.retry_import(pid)}
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+
+
 @app.get("/api/projects/{pid}")
 def get_project(pid: str):
     _p(pid)

@@ -16,8 +16,10 @@ export interface Project {
   id: string; name: string; source: string; src_lang: string; tgt_lang: string;
   max_speakers: number | null; clip_start: number | null; clip_end: number | null; duration: number | null;
   created: number;
-  /** the series this source belongs to (null = standalone), its place in it, and its YouTube id */
+  /** the work this source belongs to (a series, or its own single work), its place in it, and its YouTube id */
   series_id: string | null; position: number | null; origin_id: string | null; published: string | null;
+  /** its own hidden single-source work (a standalone video), not a series; uid = portable identity */
+  standalone: boolean; uid: string;
   counts: { sentences: number; translated: number; translated_by_lang: Record<string, number>; reviewed: number; chapters: number;
     characters: number; genders_set: number; kept: number; linked: number };
   /** target languages, primary first */
@@ -153,6 +155,7 @@ export const api = {
   deleteSeries: (s: string) => req<{ released: number }>("DELETE", `/api/series/${s}`),
   orderSeries: (s: string, ids: string[]) => req<Project[]>("PUT", `/api/series/${s}/order`, { ids }),
   attachProject: (p: string, series_id: string | null) => req<Project>("PUT", `/api/projects/${p}/series`, { series_id }),
+  retryImport: (p: string) => req<{ task: string }>("POST", `/api/projects/${p}/import`),
   analyze: (p: string, root?: string) => req("POST", `/api/projects/${p}/analyze`, { root }),
   settings: () => req<Settings>("GET", "/api/settings"),
   saveSettings: (s: Settings) => req<Settings>("PUT", "/api/settings", s),

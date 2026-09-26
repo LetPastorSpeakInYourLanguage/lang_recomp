@@ -8,6 +8,8 @@ import json
 import os
 import sqlite3
 import threading
+import time
+import uuid
 from pathlib import Path
 
 DATA = Path(os.environ.get("LANGBRIDGE_DATA", Path(__file__).resolve().parents[1] / "data"))
@@ -142,7 +144,42 @@ def _migrate(c: sqlite3.Connection) -> None:
             c.executemany("INSERT INTO chapters (project_id,id,start,title,updated) VALUES (?,?,?,'',strftime('%s','now'))",
                           [(pid, i, st) for i, st in enumerate([0.0, *starts], 1)])
         c.execute("UPDATE sentences SET chapter_break=0 WHERE chapter_break<>0")
+    _migrate_works(c)
     c.commit()
+
+
+def new_uid() -> str:
+    """A portable identity: it never changes here and travels with a work to other teams."""
+    return uuid.uuid4().hex
+
+
+def _migrate_works(c: sqlite3.Connection) -> None:
+    """Every source belongs to a work (a series); a standalone video gets a hidden
+    single-source work of kind 'single'. Portable rows get a uid. Both run once:
+    they only touch rows that lack them."""
+    for table in ("series", "projects", "clips", "collections"):
+        if "uid" not in {r[1] for r in c.execute(f"PRAGMA table_info({table})")}:
+            c.execute(f"ALTER TABLE {table} ADD COLUMN uid TEXT")
+    if "rights" not in {r[1] for r in c.execute("PRAGMA table_info(series)")}:
+        c.execute("ALTER TABLE series ADD COLUMN rights TEXT DEFAULT ''")
+    for pid, name, src, tgt, meta, created in c.execute(
+            "SELECT id, name, src_lang, tgt_lang, meta, created FROM projects WHERE series_id IS NULL").fetchall():
+        extra = (json.loads(meta or "{}").get("targets") or [])
+        sid = _free_series_id(c, pid)
+        c.execute("INSERT INTO series (id,name,kind,src_lang,targets,settings,created) VALUES (?,?,'single',?,?,'{}',?)",
+                  (sid, name, src or "en", json.dumps([tgt or "am", *[t for t in extra if t != tgt]]), created or time.time()))
+        c.execute("UPDATE projects SET series_id=?, position=1 WHERE id=?", (sid, pid))
+        c.execute("UPDATE clips SET series_id=? WHERE source_id=? AND series_id IS NULL", (sid, pid))
+    for table, key in (("series", "id"), ("projects", "id"), ("clips", "id"), ("collections", "id")):
+        for (k,) in c.execute(f"SELECT {key} FROM {table} WHERE uid IS NULL").fetchall():
+            c.execute(f"UPDATE {table} SET uid=? WHERE {key}=?", (new_uid(), k))
+
+
+def _free_series_id(c: sqlite3.Connection, base: str) -> str:
+    sid, n = base, 2
+    while c.execute("SELECT 1 FROM series WHERE id=?", (sid,)).fetchone():
+        sid, n = f"{base}-{n}", n + 1
+    return sid
 
 
 def rows(sql: str, *args) -> list[dict]:

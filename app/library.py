@@ -55,8 +55,8 @@ def create_clip(pid: str, start: float, end: float, title: str, kind: str = "cli
     p = _source(pid)
     now = time.time()
     c = db.conn()
-    cur = c.execute("INSERT INTO clips (series_id,source_id,title,kind,note,created,updated) VALUES (?,?,?,?,?,?,?)",
-                    (p["series_id"], pid, title.strip()[:120], kind, note, now, now))
+    cur = c.execute("INSERT INTO clips (series_id,source_id,title,kind,note,created,updated,uid) VALUES (?,?,?,?,?,?,?,?)",
+                    (p["series_id"], pid, title.strip()[:120], kind, note, now, now, db.new_uid()))
     cid = cur.lastrowid
     c.execute("INSERT INTO clip_revisions (clip_id,rev,segments,created) VALUES (?,1,?,?)",
               (cid, json.dumps([{"source_id": pid, "start": round(start, 3), "end": round(end, 3)}]), now))
@@ -152,7 +152,8 @@ def _name(name: str) -> str:
 
 def create_collection(name: str) -> dict:
     c = db.conn()
-    cid = c.execute("INSERT INTO collections (name,created) VALUES (?,?)", (_name(name), time.time())).lastrowid
+    cid = c.execute("INSERT INTO collections (name,created,uid) VALUES (?,?,?)",
+                    (_name(name), time.time(), db.new_uid())).lastrowid
     c.commit()
     return get_collection(cid)
 

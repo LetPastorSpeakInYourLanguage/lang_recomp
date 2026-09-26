@@ -44,8 +44,8 @@ export default function Sidebar({ projects, series, project, screen, openSeries,
             </div>
           );
         })}
-        {series.length > 0 && projects.some((p) => !p.series_id) && <div className="label px-12 pt-8 pb-2">Standalone</div>}
-        {projects.filter((p) => !p.series_id).map((p) => <ProjectRow key={p.id} p={p} on={project?.id === p.id} screen={screen} />)}
+        {series.length > 0 && projects.some((p) => p.standalone) && <div className="label px-12 pt-8 pb-2">Standalone</div>}
+        {projects.filter((p) => p.standalone).map((p) => <ProjectRow key={p.id} p={p} on={project?.id === p.id} screen={screen} />)}
         {projects.length === 0 && series.length === 0 && <div className="px-12 py-6 text-11 text-faint">Nothing yet.</div>}
       </div>
 

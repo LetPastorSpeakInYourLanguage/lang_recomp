@@ -25,8 +25,14 @@ def test_existing_projects_stay_standalone(fresh):
     c.commit()
     c.close()
     p = project.summary("old")
-    assert p["series_id"] is None and p["tgt_lang"] == "am"
-    assert series.listing() == []
+    # it gets its own hidden single-source work: standalone in the UI, a work to share
+    assert p["standalone"] and p["series_id"] == "old" and p["tgt_lang"] == "am" and len(p["uid"]) == 32
+    w = series.get("old")
+    assert w["kind"] == "single" and w["targets"] == ["am"] and len(w["uid"]) == 32
+    assert series.listing() == []  # single works are not listed as series
+    db._local.c = None
+    db.conn()  # migrating again changes nothing
+    assert db.row("SELECT COUNT(*) n FROM series")["n"] == 1
 
 
 def test_new_sources_take_the_series_languages_and_settings(fresh):
@@ -47,12 +53,16 @@ def test_reorder_and_attach(fresh):
     b = series.add_source(s["id"], "Ep 2", "y")
     assert [x["id"] for x in series.reorder(s["id"], [b["id"]])] == [b["id"], a["id"]]
     solo = project.create("Loose", "z", None, None, None)
+    own = solo["series_id"]
+    assert project.summary(solo["id"])["standalone"] and series.get(own)["kind"] == "single"
     p = series.attach(solo["id"], s["id"])
-    assert p["series_id"] == s["id"] and "ti" in p["targets"]  # the series' languages join its own
+    assert p["series_id"] == s["id"] and not p["standalone"] and "ti" in p["targets"]  # the series' languages join its own
+    assert db.row("SELECT 1 FROM series WHERE id=?", own) is None  # its empty single work is gone
     assert [x["id"] for x in series.sources(s["id"])][-1] == solo["id"]
-    assert series.attach(solo["id"], None)["series_id"] is None
+    back = series.attach(solo["id"], None)
+    assert back["standalone"] and series.get(back["series_id"])["kind"] == "single"
     assert series.remove(s["id"]) == 2  # the grouping goes, the videos stay
-    assert project.summary(a["id"])["series_id"] is None and series.listing() == []
+    assert project.summary(a["id"])["standalone"] and series.listing() == []
 
 
 def test_bad_kind_and_language_codes_are_refused(fresh):
