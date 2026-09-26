@@ -74,6 +74,26 @@ export interface BulkStatus {
   videos: { done: number; loaded: number; failed: number; queued: number; not_sent: number };
   failures: { id: string; name: string; error: string }[];
 }
+export interface LibraryInfo {
+  id: string; uid: string; name: string; root_id: string; path: string; src_lang: string; targets: string[]; kind: string;
+  created: number; scanned: number | null; counts?: { works: number; videos: number };
+}
+export interface LibraryVideo {
+  id: string; name: string; lang: string; group: string | null; subtitles: boolean; subtitles_other: string[];
+  lines: number; dubbed: string[]; duration: number | null; size: number | null;
+}
+export interface LibraryWork {
+  id: string; name: string; kind: string; standalone: boolean; speakers: string[]; videos: LibraryVideo[];
+  languages: string[]; with_subtitles: number; processed: number; dubbed: number;
+}
+export type Stage = "fetch" | "transcribe" | "translate" | "voice" | "mix";
+export interface RunInfo {
+  run: string; name?: string; job?: string; root: string; state: string | null; progress?: number | null; note?: string | null;
+  stages?: Stage[]; videos?: number; works?: number; done?: Record<Stage, number>; failed?: number; saved?: string[];
+  has_results?: boolean; created?: number; finished?: number | null; timings?: Record<string, number>;
+  report?: { captions: { video: string; kind: string; captions_raw?: CapCompare; captions_aligned?: CapCompare }[] } | null;
+}
+export interface CapCompare { words: number; wer: number; timing_median_s: number | null; timing_p90_s: number | null }
 export interface NewVideo { name: string; source: string; clip_start?: number | null; clip_end?: number | null; max_speakers?: number | null }
 
 export interface Job { id: string; stage: string; role: string; root: string; created: number; state: string | null; progress: number | null; error: string | null; result: Record<string, unknown> | null; elapsed_s: number | null; heartbeat: number | null }
@@ -194,6 +214,18 @@ export const api = {
   openExports: () => req("POST", "/api/exports/open"),
   inspectPackage: (path: string) => req<PackageInfo>("POST", "/api/import/inspect", { path }),
   importPackage: (path: string, fetch = true) => req<ImportReport>("POST", "/api/import", { path, fetch }),
+  libraries: () => req<LibraryInfo[]>("GET", "/api/libraries"),
+  createLibrary: (b: { name: string; root: string; path: string; src_lang: string; targets: string[]; kind: string }) =>
+    req<LibraryInfo>("POST", "/api/libraries", b),
+  library: (id: string) => req<LibraryInfo & { works: LibraryWork[] }>("GET", `/api/libraries/${id}`),
+  scanLibrary: (id: string) => req<{ works: number; new_works: number; videos: number; new_videos: number }>("POST", `/api/libraries/${id}/scan`),
+  loadSubtitles: (id: string, only?: string[]) => req<{ loaded: number; failed: { id: string; error: string }[] }>(
+    "POST", `/api/libraries/${id}/load_subtitles`, { only }),
+  createRun: (b: { videos: string[]; root: string; stages?: Stage[]; options?: Record<string, unknown>; name?: string; owner?: string }) =>
+    req<{ run: string; job: string; root: string; videos: number; works: number; stages: Stage[] }>("POST", "/api/runs", b),
+  runs: (owner: string) => req<RunInfo[]>("GET", `/api/runs?owner=${encodeURIComponent(owner)}`),
+  openRun: (root: string, run: string) => req<{ works: string[]; sources: { added: string[]; matched: string[] }; lines: number; notes: string[] }>(
+    "POST", `/api/runs/${root}/${run}/open`),
   deleteSeries: (s: string) => req<{ released: number }>("DELETE", `/api/series/${s}`),
   orderSeries: (s: string, ids: string[]) => req<Project[]>("PUT", `/api/series/${s}/order`, { ids }),
   attachProject: (p: string, series_id: string | null) => req<Project>("PUT", `/api/projects/${p}/series`, { series_id }),
