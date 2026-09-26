@@ -24,15 +24,15 @@ local disks); then teams working on shared metadata with distributed compute.*
 
 ## P0 — to hear the first Colab-made dubs
 
-- [ ] **RUN** Rewrite the Colab notebook: plain wording (no "polling jobs"): connect Drive → set up → *Run what the app sent* (one cell, readable progress) → release GPU. (`scripts/sync_worker.py`)
-- [ ] **RUN** Publish `app/` to Drive with the worker (`sync_worker.py`), so the runner can import it on Colab (`root/worker/app`).
-- [ ] **RUN** Runner prerequisites on Colab: `ensure("yt-dlp")`, `ensure("faster-whisper>=1.1")`, `soundfile`, JS runtime for yt-dlp (node/deno); check Colab's ffmpeg has chromaprint/rubberband (fallbacks exist).
-- [ ] **RUN** Merge `feat/colab-run` into `main` (build pass before/after), then `sync_worker` (worker changed a lot).
-- [ ] **RUN** Real run #1 on Colab: 6 Minute English, a few videos, end to end, `captions_download` 6 / `captions_align` 2. Fix what breaks. Then the whole series (transcribe all; dub a batch).
+- [x] **RUN** Rewrite the Colab notebook: plain wording (no "polling jobs"): connect Drive → set up → *Run what the app sent* (one cell, readable progress) → release GPU. (`scripts/sync_worker.py`)
+- [x] **RUN** Publish `app/` to Drive with the worker (`sync_worker.py`), so the runner can import it on Colab (`root/worker/app`).
+- [x] **RUN** Runner installs yt-dlp / faster-whisper / soundfile; JS runtime node→deno fallback. *(still to confirm on Colab: chromaprint/rubberband in its ffmpeg — fallbacks exist)*
+- [x] **RUN** Merge `feat/colab-run` into `main` (build pass before/after), then `sync_worker` (worker changed a lot).
+- [ ] **RUN** Real run #1 on Colab — **queued** as `runs/20260926-171244-6-minute-english` (6 episodes, end to end, captions 6 / aligned 2); **waiting for the owner to press Run all in Colab**. Fix what breaks. Then the whole series (transcribe all; dub a batch).
 - [ ] **RUN** Open results in the app; play a dubbed MP4 from G: (Mix & export) — owner's acceptance.
 - [ ] **RUN** Summarise the captions report for the owner (Whisper vs YouTube captions raw vs aligned: WER, timing).
 - [ ] **UI** Check the new screens in the browser (the in-app browser tools were unavailable when they were built): Library, Run panel, Home libraries, Series run panel, Cast, Share, Open a shared work.
-- [ ] **BULK** Clean up: the 458 6ME sources still carry `meta.remote` from the cancelled bulk jobs (their bulk status reads "queued"); decide to retire `app/bulk.py` + `/api/series/*/bulk` + bulk stage, or keep only `fetch_remote` for package media.
+- [ ] **BULK** ~~Clean up `meta.remote` markers~~ (done 2026-09-26); still decide to retire `app/bulk.py` + `/api/series/*/bulk` + bulk stage, or keep only `fetch_remote` for package media.
 
 ## P1 — next
 
@@ -70,7 +70,7 @@ local disks); then teams working on shared metadata with distributed compute.*
 
 ## Done (by plan, newest first)
 
-- **LIB/RUN/TEAM groundwork (feat/colab-run, not merged):** captions/subtitles reader; batched Whisper across videos; packages with media `ref`; per-source media folder; runs (one `pipeline` job, stages, resumable, results per work); library folders + standard; multi-work runs; one teacher across a library's works; brief project lists; Library/Run screens.
+- **LIB/RUN/TEAM groundwork (feat/colab-run, merged `c94768e`, worker+app published to Drive):** captions/subtitles reader; batched Whisper across videos; packages with media `ref`; per-source media folder; runs (one `pipeline` job, stages, resumable, results per work); library folders + standard; multi-work runs; one teacher across a library's works; brief project lists; Library/Run screens.
 - **BULK (merged):** bulk stage, Drive-only fetching, test isolation (`tests/conftest.py`).
 - **A5 (merged):** works for every source, uids, cast/appearances/matching (threshold 0.55 from real data), voice banks, Cast screen, `.lbwork` share/import, pivot reference; real run on 6 Minute English.
 - **A4 (merged):** series, channel picker, clips & collections, fingerprints, recurring parts, reuse in dubbing, sandbox.
