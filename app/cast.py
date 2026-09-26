@@ -106,13 +106,18 @@ def voiceprint(uid: str, exclude: str | None = None) -> np.ndarray | None:
 
 
 def matches(pid: str, label: str) -> list[dict]:
-    """The work's other characters ranked by voice similarity to this label."""
+    """The characters this voice could be, ranked by voice similarity: the work's own and,
+    for a work in a library, those of the library's other works (the same teacher or host
+    across all of them)."""
     v = _centroids(pid).get(label)
     sid = _work(pid)
     if v is None:
         return []
     out = []
-    for r in db.rows("SELECT uid, name FROM cast WHERE series_id=?", sid):
+    lib = (db.row("SELECT library_id FROM series WHERE id=?", sid) or {}).get("library_id")
+    pool = db.rows("SELECT uid, name FROM cast WHERE series_id=?", sid) if not lib else db.rows(
+        "SELECT c.uid, c.name FROM cast c JOIN series s ON s.id=c.series_id WHERE s.id=? OR s.library_id=?", sid, lib)
+    for r in pool:
         vp = voiceprint(r["uid"], exclude=pid)
         if vp is not None:
             out.append({"uid": r["uid"], "name": r["name"], "score": round(float(v @ vp), 3)})
@@ -199,12 +204,17 @@ def link(pid: str, label: str, uid: str) -> dict:
     """A person says which character this label is (confirmed)."""
     a = _appearance(pid, label)
     c = get(uid)
-    if c["series_id"] != _work(pid):
+    if c["series_id"] != _work(pid) and not _same_library(c["series_id"], _work(pid)):
         raise ValueError("that character belongs to another work")
     db.run("UPDATE appearances SET character_uid=?, status='confirmed', score=NULL, updated=? WHERE source_id=? AND label=?",
            uid, time.time(), pid, label)
     _drop_if_orphan(a["character_uid"])
     return _appearance(pid, label)
+
+
+def _same_library(a: str, b: str) -> bool:
+    la = (db.row("SELECT library_id FROM series WHERE id=?", a) or {}).get("library_id")
+    return bool(la) and la == (db.row("SELECT library_id FROM series WHERE id=?", b) or {}).get("library_id")
 
 
 def detach(pid: str, label: str) -> dict:

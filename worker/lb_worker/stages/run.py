@@ -1,11 +1,12 @@
 """Runs: the Lang-Bridge pipeline for a set of videos, on the device the app sent it to.
 
-The app writes ``runs/<run id>/manifest.json`` and ``work.lbwork`` (its current work,
-media by reference) into the device's folder and queues one ``pipeline`` job. This
-stage imports that work into a scratch library, runs the app's own logic and the
-models in-process, and publishes ``result.lbwork`` (media by reference) and
-``state.json`` after every stage, so the app can open the results — and a run that
-stops resumes where it was.
+The app writes ``runs/<run id>/manifest.json`` and ``works/<work uid>.lbwork`` (each
+work as it is there, media by reference) into the device's folder and queues one
+``pipeline`` job. This stage imports the works into a scratch library, runs the app's own
+logic and the models in-process, and publishes ``results/<work uid>.lbwork`` (media by
+reference) and ``state.json`` after every stage, so the app can open the results — and a
+run that stops resumes where it was. Videos of several works (a library selection) are
+batched together.
 
 Stages, in order (a run may stop after any of them, for a person to check the work):
   fetch       videos into the device library (a download thread); YouTube captions for
@@ -109,10 +110,13 @@ class Run:
 
     def publish(self, stage_name: str) -> None:
         A = self.app
-        out = self.dir / "result.lbwork.part"
-        A.package.export(self.sid, self.langs, media="ref", out=out, ref_root=self.root,
-                         note=f"run {self.id}: through {stage_name}")
-        os.replace(out, self.dir / "result.lbwork")
+        (self.dir / "results").mkdir(exist_ok=True)
+        for sid in self.sids:
+            uid = A.db.row("SELECT uid FROM series WHERE id=?", sid)["uid"]
+            out = self.dir / "results" / f"{uid}.lbwork.part"
+            A.package.export(sid, json.loads(A.db.row("SELECT targets FROM series WHERE id=?", sid)["targets"]),
+                             media="ref", out=out, ref_root=self.root, note=f"run {self.id}: through {stage_name}")
+            os.replace(out, self.dir / "results" / f"{uid}.lbwork")
         self.state["stages"][stage_name] = {"done": time.time()}
         self.save_state()
         self.log(f"· saved to Drive: results through '{stage_name}'")
@@ -121,23 +125,22 @@ class Run:
     def go(self) -> dict:
         A = self.app
         t0 = time.time()
-        rep = A.package.import_work(self.dir / "work.lbwork", fetch=False, ref_root=self.root)
-        if (self.dir / "result.lbwork").exists():  # resuming: what this run already made
-            A.package.import_work(self.dir / "result.lbwork", fetch=False, ref_root=self.root)
-        self.sid = rep["work"]
-        w = A.db.row("SELECT * FROM series WHERE id=?", self.sid)
-        self.work_uid = w["uid"]
-        self.langs = self.opt.get("langs") or json.loads(w["targets"])
-        uids = self.man.get("sources") or [r["uid"] for r in A.db.rows(
-            "SELECT uid FROM projects WHERE series_id=? ORDER BY position, created", self.sid)]
+        works = self.man.get("works") or [{"file": "work.lbwork"}]
+        self.sids = [A.package.import_work(self.dir / w["file"], fetch=False, ref_root=self.root)["work"] for w in works]
+        for f in sorted((self.dir / "results").glob("*.lbwork")) if (self.dir / "results").exists() else []:
+            A.package.import_work(f, fetch=False, ref_root=self.root)  # resuming: what this run already made
+        uids = self.man.get("sources") or [r["uid"] for sid in self.sids for r in A.db.rows(
+            "SELECT uid FROM projects WHERE series_id=? ORDER BY position, created", sid)]
         self.pids = [A.db.row("SELECT id FROM projects WHERE uid=?", u)["id"] for u in uids
                      if A.db.row("SELECT id FROM projects WHERE uid=?", u)]
         self.uid = {pid: A.project.get(pid)["uid"] for pid in self.pids}
-        for pid in self.pids:  # every source's media live in the device library
+        for pid in self.pids:  # every source's media live in the device library, by work
             if not A.project.media_dir(pid):
-                d = self.root / "library" / self.work_uid / self.uid[pid]
-                A.db.set_meta(pid, media_dir=str(d))
-        self.log(f"Run {self.id}: {len(self.pids)} videos, stages {', '.join(self.stages)}, "
+                wuid = A.db.row("SELECT s.uid FROM series s JOIN projects p ON p.series_id=s.id WHERE p.id=?", pid)["uid"]
+                A.db.set_meta(pid, media_dir=str(self.root / "library" / wuid / self.uid[pid]))
+        self.langs = self.opt.get("langs") or sorted({t for sid in self.sids for t in json.loads(
+            A.db.row("SELECT targets FROM series WHERE id=?", sid)["targets"])})
+        self.log(f"Run {self.id}: {len(self.pids)} videos in {len(self.sids)} work(s), stages {', '.join(self.stages)}, "
                  f"languages {', '.join(self.langs)}")
         if "fetch" in self.stages or "transcribe" in self.stages:
             self.fetch_and_transcribe()
@@ -152,11 +155,22 @@ class Run:
         return {"videos": len(self.pids), "stages": self.stages, "seconds": round(time.time() - t0, 1)}
 
     # ---- fetch + transcribe (overlapped) -------------------------------------------------
+    def resolve(self, ref: str | None) -> Path | None:
+        """A file as this device finds it: "root:<path from the job folder>" (on Drive) or
+        "file:<full path>" (on this PC)."""
+        if not ref:
+            return None
+        if ref.startswith("root:"):
+            return Path(os.path.normpath(self.root / ref[5:]))
+        if ref.startswith("file:"):
+            return Path(ref[5:])
+        return None
+
     def video_of(self, pid: str) -> Path | None:
         p = self.app.project.get(pid)
         src = p["source"] or ""
-        if src.startswith("root:"):  # a folder run: the file is on this device already
-            return (self.root / src[5:]).resolve()
+        if src.startswith(("root:", "file:")):  # a library or folder video: already on this device
+            return self.resolve(src)
         v = self.app.project.media_dir(pid) / "video.mp4"
         return v if v.exists() else (Path(p["video"]) if p["video"] and Path(p["video"]).exists() else None)
 
@@ -254,7 +268,11 @@ class Run:
             for pid, a in audios.items():
                 A.db.run("UPDATE projects SET duration=COALESCE(duration, ?) WHERE id=?", round(len(a) / SR, 3), pid)
         # a video with its own subtitles is not transcribed: they are its transcript
-        subs = {pid: A.db.meta(pid).get("subtitles") for pid in group if A.db.meta(pid).get("subtitles")}
+        subs = {}
+        for pid in group:
+            f = self.resolve((A.db.meta(pid).get("refs") or {}).get("subtitles"))
+            if f is not None and f.exists():
+                subs[pid] = f
         need = {pid: a for pid, a in audios.items() if pid not in subs}
         docs = {}
         if need:
@@ -302,10 +320,26 @@ class Run:
                 if self.opt.get("assume_checked", True):  # the owner's rule for this run: checks pass
                     for a in A.db.rows("SELECT label FROM appearances WHERE source_id=? AND status='proposed'", pid):
                         A.cast.confirm(pid, a["label"])
+                self._name_declared_speaker(pid)
             self.mark(uid, "transcribe", "done")
         self.log(f"· group of {len(group)} transcribed, aligned and diarized in {time.time() - t:.0f} s")
         self.publish("transcribe")
         self._report()
+
+    def _name_declared_speaker(self, pid: str) -> None:
+        """A work that names its speakers (work.json "speakers"): its main voice, while still
+        unnamed, is the first of them — the teacher of a teaching series. Later videos and
+        works match that voice, so the same person is one character everywhere."""
+        A = self.app
+        sid = A.project.get(pid)["series_id"]
+        names = json.loads(A.db.row("SELECT settings FROM series WHERE id=?", sid)["settings"] or "{}").get("speakers") or []
+        if not names:
+            return
+        main = A.db.row("SELECT character_uid FROM appearances WHERE source_id=? ORDER BY talk_s DESC LIMIT 1", pid)
+        if main:
+            c = A.cast.get(main["character_uid"])
+            if c["auto"]:
+                A.cast.update(c["uid"], name=names[0])
 
     def _report(self) -> None:
         """Captions vs Whisper for the trial videos (raw and aligned captions)."""
@@ -324,12 +358,16 @@ class Run:
         _dump(self.dir / "report.json", {"run": self.id, "captions": rows})
 
     # ---- translate -----------------------------------------------------------------------
+    def langs_of(self, pid: str) -> list[str]:
+        own = self.app.project.targets(pid)
+        return [l for l in self.langs if l in own] or own if not self.opt.get("langs") else self.opt["langs"]
+
     def translate(self) -> None:
         A = self.app
         for k, pid in enumerate(self.pids):
             if not A.db.row("SELECT 1 FROM sentences WHERE project_id=?", pid):
                 continue
-            for lang in self.langs:
+            for lang in self.langs_of(pid):
                 if lang not in A.project.targets(pid):
                     A.project.add_target(pid, lang)
                 if all(s["tr"] for s in A.project.sentences(pid, lang)):
@@ -390,6 +428,8 @@ class Run:
                         key = f"{uid}:{label}"
                         speakers[key] = [str(ctx.work / "banks" / uid / f) for f in c["heldout_files"]]
                         c["ref"] = str(ctx.work / "banks" / uid / c["bank_file"])
+                if lang not in self.langs_of(pid):
+                    continue
                 for s in A.voice.lines_to_voice(pid, lang, {k: v for k, v in chars.items() if v.get("ref")}):
                     c = chars[s["speaker"]]
                     for k in range(engine["takes"]):
@@ -448,7 +488,7 @@ class Run:
             A.mix.export(pid, lang)
             self.log(f"mixed and exported {A.project.get(pid)['name'][:50]} ({lang}) in {time.time() - t:.0f} s")
 
-        jobs = [(pid, lang) for pid in self.dub_set() for lang in self.langs]
+        jobs = [(pid, lang) for pid in self.dub_set() for lang in self.langs_of(pid)]
         with ThreadPoolExecutor(max_workers=int(self.opt.get("mix_threads", 2))) as ex:
             for f in [ex.submit(one, pid, lang) for pid, lang in jobs]:
                 try:

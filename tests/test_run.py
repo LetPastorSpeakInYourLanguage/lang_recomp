@@ -122,6 +122,7 @@ def test_a_folder_run_goes_from_videos_to_dubbed_mp4s_and_the_app_opens_it(tmp_p
     db.DATA, db.DB_PATH, settings.PATH = saved  # the run pointed the app at its scratch library
     db._local.c = None
     assert res["videos"] == 2
+    assert (device / "runs" / r["run"] / "results").glob("*.lbwork")
     state = json.loads((device / "runs" / r["run"] / "state.json").read_text(encoding="utf-8"))
     assert all(v.get("mix") == "done" for v in state["sources"].values()), state
 
@@ -137,5 +138,39 @@ def test_a_folder_run_goes_from_videos_to_dubbed_mp4s_and_the_app_opens_it(tmp_p
         assert db.row("SELECT COUNT(*) n FROM takes WHERE project_id=? AND chosen=1", pid)["n"] == 2
     subs = [pid for pid in got["sources"]["matched"] if project.get(pid)["name"] == "lesson-2"][0]
     assert db.meta(subs)["transcript"]["source"] == "subtitles"
-    listed = runs.listing(s["id"])
+    listed = runs.listing(f"series:{s['id']}")
     assert listed[0]["done"]["mix"] == 2 and listed[0]["has_results"]
+
+
+def test_a_library_run_spans_works_and_finds_the_same_teacher_in_all_of_them(tmp_path, monkeypatch, stubs):
+    from app import cast, libraries
+
+    lib = tmp_path / "app-library"
+    monkeypatch.setattr(db, "DATA", lib)
+    monkeypatch.setattr(db, "DB_PATH", lib / "t.db")
+    monkeypatch.setattr(tasks, "start", lambda *a, **k: "task")
+    db._local.c = None
+    device = Path(settings.root("colab")["path"])
+    folder = device.parent / "Teachings"
+    (folder / "Faith").mkdir(parents=True)
+    (folder / "Grace").mkdir(parents=True)
+    (folder / "Faith" / "work.json").write_text(json.dumps({"kind": "speaker", "speakers": ["Pastor A"]}))
+    _tone(folder / "Faith" / "01 - Faith.mp4", 4, 440, video=True)
+    _tone(folder / "Grace" / "01 - Grace.mp4", 4, 520, video=True)
+    (folder / "Grace" / "01 - Grace.srt").write_text("1\n00:00:00,300 --> 00:00:01,600\nHello there.\n")
+    L = libraries.create("Teachings", "colab", str(folder), "en", ["am"], kind="speaker")
+    libraries.scan(L["id"])
+    pids = [v["id"] for w in libraries.tree(L["id"]) for v in w["videos"]]
+    r = runs.create_for(pids, "colab", ["fetch", "transcribe"], name="Teachings", owner=f"library:{L['id']}")
+    assert r["works"] == 2
+    saved = (db.DATA, db.DB_PATH, settings.PATH)
+    runmod.Run(Ctx(tmp_path, device, r["run"])).go()
+    db.DATA, db.DB_PATH, settings.PATH = saved
+    db._local.c = None
+    got = runs.open_results("colab", r["run"])
+    assert len(got["works"]) == 2 and len(got["sources"]["matched"]) == 2
+    chars = {cast.character_of(pid, "SPEAKER_00")["uid"] for pid in pids}
+    assert len(chars) == 1 and cast.get(chars.pop())["name"] == "Pastor A"  # one teacher across both works
+    grace = next(p for p in pids if project.get(p)["name"] == "01 - Grace")
+    assert db.meta(grace)["transcript"]["source"] == "subtitles"
+    assert runs.listing(f"library:{L['id']}")[0]["done"]["transcribe"] == 2

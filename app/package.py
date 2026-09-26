@@ -24,6 +24,16 @@ STEMS = ("audio", "vocals", "background")
 
 
 # ---- export --------------------------------------------------------------------------------
+def _library_of(sid: str) -> dict | None:
+    """The library a work was found in (its identity travels, so the same teacher is
+    recognised across the library's works wherever they are processed)."""
+    lid = (db.row("SELECT library_id FROM series WHERE id=?", sid) or {}).get("library_id")
+    if not lid:
+        return None
+    lib = db.row("SELECT uid, name FROM libraries WHERE id=?", lid)
+    return {"uid": lib["uid"], "name": lib["name"]} if lib else {"uid": lid, "name": None}
+
+
 def _rel(path, root: Path | None) -> str | None:
     """A path as seen from a device root (posix; "../" for a folder beside it on the same
     drive, e.g. a folder of videos elsewhere in My Drive), or None if it is elsewhere."""
@@ -55,7 +65,8 @@ def export(sid: str, langs: list[str] | None = None, media: str = "opus", takes:
 
         put("work.json", {"format": FORMAT, "version": VERSION, "exported_at": time.time(), "note": note,
                           "media": media, "languages": langs,
-                          "work": {k: w[k] for k in ("uid", "name", "kind", "src_lang", "targets", "feed_url", "rights", "settings")}})
+                          "work": {k: w[k] for k in ("uid", "name", "kind", "src_lang", "targets", "feed_url", "rights", "settings")}
+                          | {"library": _library_of(sid)}})
         for p in srcs:
             base, d = f"sources/{p['uid']}/", project.pdir(p["id"])
             meta = json.loads(p["meta"] or "{}")
@@ -71,7 +82,9 @@ def export(sid: str, langs: list[str] | None = None, media: str = "opus", takes:
             put(base + "source.json", {**{k: p[k] for k in ("uid", "name", "source", "origin_id", "published", "position",
                                                             "clip_start", "clip_end", "duration", "src_lang", "max_speakers")},
                                        "mix": meta.get("mix"), "chapter_seq": meta.get("chapter_seq"), "refs": refs,
-                                       "transcript": meta.get("transcript")})
+                                       "transcript": meta.get("transcript"),
+                                       # how the device finds this source's files (library videos, subtitles)
+                                       "device_refs": meta.get("refs"), "library": meta.get("library")})
             lines = db.rows("SELECT id, start, end, speaker, text, words, reviewed, mode FROM sentences WHERE project_id=?"
                             " ORDER BY start", p["id"])
             for ln in lines:
@@ -93,7 +106,9 @@ def export(sid: str, langs: list[str] | None = None, media: str = "opus", takes:
                         z.write(enc, base + f"media/{name}{enc.suffix}")
 
         people = []
-        for c in db.rows("SELECT * FROM cast WHERE series_id=? ORDER BY created", sid):
+        # the work's own characters, and people of its library who appear in it
+        for c in db.rows("SELECT * FROM cast WHERE series_id=? OR uid IN (SELECT a.character_uid FROM appearances a"
+                         " JOIN projects p ON p.id=a.source_id WHERE p.series_id=?) ORDER BY created", sid, sid):
             bank = []
             for r in db.rows("SELECT * FROM cast_bank WHERE character_uid=?", c["uid"]):
                 if r["source_id"] not in uid_of or not r["path"] or not Path(r["path"]).exists():
@@ -197,6 +212,9 @@ def import_work(path: str | Path, fetch: bool = True, ref_root: Path | None = No
                    json.dumps(w["targets"]), json.dumps(w.get("settings") or {}), time.time(), w["uid"], w.get("rights") or "")
             rep["created"] = True
         rep["work"] = sid
+        if w.get("library") and not db.row("SELECT library_id FROM series WHERE id=?", sid)["library_id"]:
+            here_lib = db.row("SELECT id FROM libraries WHERE uid=?", w["library"]["uid"])
+            db.run("UPDATE series SET library_id=? WHERE id=?", here_lib["id"] if here_lib else w["library"]["uid"], sid)
         targets = list(series.get(sid)["targets"])
         for lang in wj.get("languages", []):  # the languages that arrive become the work's too
             if lang not in targets:
@@ -252,6 +270,10 @@ def import_work(path: str | Path, fetch: bool = True, ref_root: Path | None = No
                 _place_refs(pid, sj["refs"], ref_root)
             if sj.get("transcript"):
                 db.set_meta(pid, transcript=sj["transcript"])
+            if sj.get("device_refs") and not db.meta(pid).get("refs"):
+                db.set_meta(pid, refs=sj["device_refs"])
+            if sj.get("library") and not db.meta(pid).get("library"):
+                db.set_meta(pid, library=sj["library"])
             spk = json.loads(z.read(base + "speakers.json"))
             dia = project.pdir(pid) / "diarization.json"
             if spk.get("centroids") and not dia.exists():  # voices keep matching in this library
