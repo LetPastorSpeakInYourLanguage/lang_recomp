@@ -91,6 +91,14 @@ CREATE TABLE IF NOT EXISTS appearances (
   source_id TEXT, label TEXT, character_uid TEXT, score REAL, status TEXT DEFAULT 'confirmed',
   talk_s REAL DEFAULT 0, updated REAL, PRIMARY KEY (source_id, label)
 );
+-- A character's voice bank (app/banks.py): lines cut from its confirmed appearances'
+-- vocal stems into files under the work. role bank | heldout | excluded; manual = a
+-- person's choice, kept when the bank is rebuilt.
+CREATE TABLE IF NOT EXISTS cast_bank (
+  character_uid TEXT, source_id TEXT, line_id INTEGER, start REAL, end REAL, text TEXT,
+  role TEXT DEFAULT 'bank', manual INTEGER DEFAULT 0, path TEXT, added REAL,
+  PRIMARY KEY (character_uid, source_id, line_id)
+);
 CREATE TABLE IF NOT EXISTS takes (
   project_id TEXT, sentence_id INTEGER, job_id TEXT, take INTEGER, path TEXT, text TEXT,
   sim REAL, cer REAL, dur REAL, dur_s REAL, asr TEXT, chosen INTEGER DEFAULT 0, created REAL,

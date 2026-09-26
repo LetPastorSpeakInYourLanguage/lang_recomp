@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import aligners, cast, chapters, db, feeds, langs, library, mix, project, recurring, series, settings, tasks, voice
+from . import aligners, banks, cast, chapters, db, feeds, langs, library, mix, project, recurring, series, settings, tasks, voice
 
 app = FastAPI(title="Lang-Bridge")
 WEB = Path(__file__).resolve().parents[1] / "web" / "dist"
@@ -641,23 +641,37 @@ class LinkReq(BaseModel):
     character_uid: str | None = None  # none = a character of its own
 
 
+def _rebank(*uids: str | None) -> None:
+    """A character's episodes changed: its voice bank follows (new lines cut, old dropped)."""
+    for uid in {u for u in uids if u}:
+        try:
+            banks.rebuild(uid)
+        except (KeyError, OSError, subprocess.CalledProcessError):
+            pass  # a bank is rebuilt on demand when voicing too
+
+
 @app.post("/api/projects/{pid}/characters/{label}/confirm")
 def confirm_character(pid: str, label: str):
     try:
-        return cast.confirm(pid, label)
+        a = cast.confirm(pid, label)
     except KeyError:
         raise HTTPException(404, "no such speaker")
+    _rebank(a["character_uid"])
+    return a
 
 
 @app.post("/api/projects/{pid}/characters/{label}/link")
 def link_character(pid: str, label: str, body: LinkReq):
     """Say who this voice is: a character of the work, or (none) a character of its own."""
+    before = cast.character_of(pid, label)
     try:
-        return cast.link(pid, label, body.character_uid) if body.character_uid else cast.detach(pid, label)
+        a = cast.link(pid, label, body.character_uid) if body.character_uid else cast.detach(pid, label)
     except KeyError:
         raise HTTPException(404, "no such speaker or character")
     except ValueError as e:
         raise HTTPException(400, str(e))
+    _rebank(a["character_uid"], before and db.row("SELECT uid FROM cast WHERE uid=?", before["uid"]) and before["uid"])
+    return a
 
 
 @app.get("/api/series/{sid}/cast")
@@ -696,11 +710,60 @@ class CastMerge(BaseModel):
 def merge_cast(uid: str, body: CastMerge):
     """Two characters of a work are one person."""
     try:
-        return cast.merge(uid, body.into)
+        c = cast.merge(uid, body.into)
     except KeyError:
         raise HTTPException(404, "no such character")
     except ValueError as e:
         raise HTTPException(400, str(e))
+    db.run("DELETE FROM cast_bank WHERE character_uid=?", uid)
+    _rebank(body.into)
+    return c
+
+
+@app.get("/api/cast/{uid}/bank")
+def cast_bank(uid: str):
+    """The character's voice bank, held-out and excluded lines, and the lines it could use."""
+    try:
+        cast.get(uid)
+    except KeyError:
+        raise HTTPException(404, "no such character")
+    names = {r["id"]: r["name"] for r in db.rows("SELECT id, name FROM projects")}
+    used = {(r["source_id"], r["line_id"]) for r in banks.rows(uid)}
+    return {"rows": [r | {"source_name": names.get(r["source_id"])} for r in banks.rows(uid)],
+            "candidates": [c | {"source_name": names.get(c["source_id"])} for c in banks.candidates(uid)
+                           if (c["source_id"], c["id"]) not in used]}
+
+
+@app.post("/api/cast/{uid}/bank/rebuild")
+def rebuild_bank(uid: str):
+    try:
+        return banks.rebuild(uid)
+    except KeyError:
+        raise HTTPException(404, "no such character")
+
+
+class BankPin(BaseModel):
+    source_id: str
+    line_id: int
+    role: str = "bank"  # bank | heldout | excluded
+
+
+@app.put("/api/cast/{uid}/bank")
+def pin_bank(uid: str, body: BankPin):
+    try:
+        return banks.pin(uid, body.source_id, body.line_id, body.role)
+    except KeyError:
+        raise HTTPException(404, "no such character")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/cast/{uid}/bank/{source_id}/{line_id}")
+def bank_audio(uid: str, source_id: str, line_id: int):
+    r = db.row("SELECT path FROM cast_bank WHERE character_uid=? AND source_id=? AND line_id=?", uid, source_id, line_id)
+    if not r or not Path(r["path"]).exists():
+        raise HTTPException(404, "not in the bank")
+    return FileResponse(r["path"])
 
 
 class Merge(BaseModel):
