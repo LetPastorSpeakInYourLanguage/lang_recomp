@@ -52,9 +52,10 @@ and `set_translation`).
    translation context, recording sessions and coarse journey moments. Migrated from flags;
    `C` key kept; titles editable in Transcript. `source_id` arrives with A4. No chapter
    `status` column: per-language task status lives on chapter tasks (Phase B).
-4. 🔜 **Series, the team library and reusable parts** (approved 2026-09-26) — see
-   [A4 in detail](#a4-in-detail) below.
-5. ⬜ **Cross-source characters** — characters at series level; `appearances(source_id,
+4. ✅ **Series, the team library and reusable parts** (approved 2026-09-26) — see
+   [A4 in detail](#a4-in-detail) below. Still to do with the owner: the end-to-end run on a
+   real playlist whose videos share an intro (so far proven on the synthetic sandbox).
+5. 🔜 **Cross-source characters** — characters at series level; `appearances(source_id,
    diarization_label, character_id, confidence, confirmed_by)`; match by diarization centroids
    (`diarization.json → centroids`) and WavLM x-vectors of voice banks (see
    `worker/lb_worker/tts/score.py`); **Series cast** screen to accept/reject/new; voice banks
@@ -90,6 +91,12 @@ collection_items(collection_id, item_type clip|stage_preset, item_id, added)
 ```
 Rules: occurrences are **proposals until a person confirms** (nothing auto-applied); ids never
 reused; archiving a collection never deletes clips; clip edits add a revision.
+
+As built: `app/series.py`, `app/feeds.py`, `app/library.py`, `app/fingerprint.py`,
+`app/recurring.py`; screens Library (Home), Series, Clips & collections; Transcript range
+select + **S**. Occurrence rows got their own id (`clip_occurrences.id`); a clip's `offset`
+is derived (occurrence start − origin start). `python -m app --data <dir>` +
+`scripts/make_sandbox.py` give a throwaway library with a synthetic three-episode show.
 
 Steps (branch `feat/series`): (1) series + sources, Library home, series defaults for new
 sources; (2) follow a channel/playlist — `yt-dlp --flat-playlist -J`, tick videos, import one

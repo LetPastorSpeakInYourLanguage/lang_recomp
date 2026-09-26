@@ -14,15 +14,16 @@ Hard-won lessons: [LESSONS.md](LESSONS.md).
 |---|---|
 | **Repo** | `D:\py_self\lang_bridge_test` → GitHub `LetPastorSpeakInYourLanguage/lang_recomp` (public, MIT) |
 | **`main`** | A1–A3 + Transcript layout merged locally (`453404f`); `origin/main` is still `d6d5e7c` — **not pushed** |
-| **Current branch** | `feat/series` (A4) |
-| **Plan phase** | A1, A2, A3 **done**; next **A4** (series with multiple sources) |
-| **Tests** | 47 pass (`python -m pytest -q tests`); web typecheck + build pass |
+| **Current branch** | `feat/series` (A4) — done, each commit verified alone; merge after the build pass |
+| **Plan phase** | A1–A4 **done**; next **A5** (cross-source characters) |
+| **Tests** | 71 pass (`python -m pytest -q tests`); web typecheck + build pass |
 
 ### Next steps, in order
 
-1. Phase A4 on `feat/series`; merge into `main` after the build pass. Push only when the
-   owner says so.
-2. Then `feat/cast-linking` (A5), A6, A7, then
+1. Merge `feat/series` into `main` after the build pass. Push only when the owner says so.
+2. With the owner: a real playlist whose videos share an intro, end to end (import both,
+   find the intro, confirm, dub episode 1's intro, render episode 2).
+3. Then `feat/cast-linking` (A5), A6, A7, then
    Phase B (community server) — see PLAN.md.
 
 ### Working method the owner asked for
@@ -62,6 +63,30 @@ work through **job folders** watched by workers (`worker/lb_worker/`):
 
 Test clip project: `camille-interview` (105 s, 28 lines, 2 speakers, all reviewed, 24 dubbed
 + 4 kept original). Export: `data/projects/camille-interview/export/`.
+
+## What A4 added (series, library, recurring parts)
+
+- **Series** (`app/series.py`): kinds show/channel/speaker/course/news/other; new sources take
+  `src_lang`, targets and `settings.max_speakers`; attach/detach existing projects; reorder;
+  remove (videos stay). Projects gained `series_id, position, origin_id, published`.
+- **Channel/playlist** (`app/feeds.py`): flat listing, tabs → sections, "already added" by
+  `origin_id`; picked videos added oldest first; `tasks.start(..., serial="import")` makes
+  imports one FIFO queue.
+- **Library** (`app/library.py`): `clips` + `clip_revisions` (segments `[{source_id,start,end}]`),
+  `collections` + `collection_items`; AUTOINCREMENT ids; soft delete/archive.
+- **Recurring parts** (`app/fingerprint.py`, `app/recurring.py`): fingerprints cached as
+  `projects/<id>/fingerprint.npy` (computed at import); `search` → proposed
+  `clip_occurrences`; people confirm/reject; `discover(series)` → candidates (not stored).
+- **Reuse in dubbing**: `recurring.link` marks lines fully inside a confirmed occurrence
+  (`linked`, origin translation, provenance `linked`); translate/voice skip them;
+  `mix.render` uses `recurring.origin_takes`; fit report says "reused from …".
+- **Web**: Library home (series cards, single video with language fields, standalone list
+  with "Move to…"), Series page (settings, from-channel picker, repeating parts, sources),
+  Clips & collections, Transcript Shift+J/K + S, linked tags in Transcript/Translate/Mix,
+  sidebar grouped by series.
+- **Sandbox**: `python scripts/make_sandbox.py` then launch config `sandbox`
+  (`python -m app --serve --port 8766 --data data/sandbox`; serves `web/dist`, so
+  `npm run build` first).
 
 ## What A3 added (chapters)
 
@@ -117,8 +142,10 @@ Test clip project: `camille-interview` (105 s, 28 lines, 2 speakers, all reviewe
 ## Open items / known gaps
 
 - Remove-a-target-language UI/API does not exist yet (adding does).
-- New-project form still assumes English → Amharic (`web/src/screens/Home.tsx` tag;
-  projects default `src_lang='en'`, `tgt_lang='am'`): needs a source/target picker (A7).
+- Clips play only their first span; multi-span clips (revisions allow them) need UI.
+- Recurring-part timing constants are calibrated on synthetic audio only.
+- Discovery is synchronous (fine for a handful of hour-long sources; first run
+  fingerprints any source not yet printed).
 - Human voices, series, cross-source characters, community server, journeys: not started (PLAN.md).
 - Colab passive notebook + Seed-VC fixes published but Seed-VC conversion never completed a
   full run on Colab (session limits); local Arc path is the proven one.
