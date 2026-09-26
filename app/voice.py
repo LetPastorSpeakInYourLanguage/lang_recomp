@@ -71,8 +71,7 @@ def queue(pid: str, root_id: str | None = None, ids: list[int] | None = None, ta
     dest = project.pdir(pid) / "voice_banks"
     chars = characters_plan(pid, dest)
     bank_files = [f for c in chars.values() for f in c.pop("_files", [])]
-    lines = [s for s in project.sentences(pid, lang) if s["tr"] and s["mode"] == "dub" and s["speaker"] in chars
-             and not s["linked"] and (not ids or s["id"] in ids)]  # a recurring part is voiced at its origin
+    lines = lines_to_voice(pid, lang, chars, ids)
     if not lines:
         raise RuntimeError(f"nothing to voice in {langs.name(lang)}: translate the lines of important characters first")
     # The voice model wants the language's name; the scorer back-transcribes with the
@@ -87,6 +86,30 @@ def queue(pid: str, root_id: str | None = None, ids: list[int] | None = None, ta
     job = q.submit("voice", {"project": pid, "lang": lang}, files=[path, *bank_files], shared=[q.put_media(pid, vocals)])
     project.record_job(pid, job, "voice", role="voice", root=r["id"])
     return {"job": job, "lines": len(lines), "root": r["id"], "lang": lang}
+
+
+def lines_to_voice(pid: str, lang: str, chars: dict, ids: list[int] | None = None) -> list[dict]:
+    """Translated lines to dub of the characters in ``chars`` (a recurring part's lines
+    are voiced at its origin, not here)."""
+    return [s for s in project.sentences(pid, lang) if s["tr"] and s["mode"] == "dub" and s["speaker"] in chars
+            and not s["linked"] and (not ids or s["id"] in ids)]
+
+
+def record_takes(pid: str, lang: str, job_id: str, lines: dict) -> int:
+    """Takes made elsewhere and left where they are (e.g. on Drive, by a run):
+    ``lines`` = {line id: {"takes": [{take, path, text, sim, cer, dur, dur_s, asr}], "best": take}}.
+    The best take of each line becomes the chosen one."""
+    n = 0
+    for sid, line in lines.items():
+        db.run("UPDATE takes SET chosen=0 WHERE project_id=? AND sentence_id=? AND lang=?", pid, int(sid), lang)
+        for t in line["takes"]:
+            db.run("INSERT OR REPLACE INTO takes (project_id,sentence_id,job_id,take,path,text,sim,cer,dur,dur_s,"
+                   "asr,chosen,created,lang) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", pid, int(sid), job_id, t["take"],
+                   str(t["path"]), t["text"], t.get("sim"), t.get("cer"), t.get("dur"), t.get("dur_s"),
+                   t.get("asr"), int(t["take"] == line["best"]), time.time(), lang)
+            n += 1
+    calibrate_rate(pid, lang)
+    return n
 
 
 def ingest(pid: str) -> int:

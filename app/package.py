@@ -9,6 +9,7 @@ adds and fills in without overwriting what people decided.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import tempfile
 import time
@@ -24,12 +25,13 @@ STEMS = ("audio", "vocals", "background")
 
 # ---- export --------------------------------------------------------------------------------
 def _rel(path, root: Path | None) -> str | None:
-    """A path as seen from a device root (posix), or None if it lies elsewhere."""
+    """A path as seen from a device root (posix; "../" for a folder beside it on the same
+    drive, e.g. a folder of videos elsewhere in My Drive), or None if it is elsewhere."""
     if not path or root is None:
         return None
     try:
-        return Path(path).resolve().relative_to(Path(root).resolve()).as_posix()
-    except (ValueError, OSError):
+        return Path(os.path.relpath(Path(path).resolve(), Path(root).resolve())).as_posix()
+    except (ValueError, OSError):  # another drive
         return None
 
 
@@ -59,12 +61,13 @@ def export(sid: str, langs: list[str] | None = None, media: str = "opus", takes:
             meta = json.loads(p["meta"] or "{}")
             refs = None
             if media == "ref":
-                refs = {"dir": _rel(meta.get("media_dir"), ref_root), "video": _rel(p["video"], ref_root),
-                        "audio": _rel(p["audio"], ref_root),
-                        "stems": {n: _rel(project.stem(p["id"], n), ref_root) for n in ("vocals", "background")},
-                        "exports": {lang: {k: _rel(v, ref_root) if k == "mp4" else v for k, v in e.items()}
+                have = lambda f: _rel(f, ref_root) if f and Path(f).exists() else None  # noqa: E731 - only real files
+                refs = {"dir": _rel(meta.get("media_dir"), ref_root), "video": have(p["video"]),
+                        "audio": have(p["audio"]),
+                        "stems": {n: have(project.stem(p["id"], n)) for n in ("vocals", "background")},
+                        "exports": {lang: {k: have(v) if k == "mp4" else v for k, v in e.items()}
                                     for lang, e in (meta.get("exports") or {}).items()},
-                        "subtitles": _rel(meta.get("subtitles"), ref_root)}
+                        "subtitles": have(meta.get("subtitles"))}
             put(base + "source.json", {**{k: p[k] for k in ("uid", "name", "source", "origin_id", "published", "position",
                                                             "clip_start", "clip_end", "duration", "src_lang", "max_speakers")},
                                        "mix": meta.get("mix"), "chapter_seq": meta.get("chapter_seq"), "refs": refs,
@@ -295,7 +298,7 @@ def _insert_lines(pid: str, lines: list[dict], chapters: list[dict]) -> None:
 
 def _place_refs(pid: str, refs: dict, root: Path) -> None:
     """Media a device left in its folder: point this source at them (nothing copied)."""
-    at = lambda rel: str(Path(root) / rel) if rel else None  # noqa: E731
+    at = lambda rel: os.path.normpath(Path(root) / rel) if rel else None  # noqa: E731
     if refs.get("video") or refs.get("audio"):
         db.run("UPDATE projects SET video=COALESCE(?, video), audio=COALESCE(?, audio) WHERE id=?",
                at(refs.get("video")), at(refs.get("audio")), pid)
@@ -460,7 +463,7 @@ def _import_language(z: zipfile.ZipFile, lang: str, pid_of: dict[str, str], rep:
                     t["chosen"] = 0
             db.run("INSERT INTO takes (project_id,sentence_id,job_id,take,path,text,sim,cer,dur,dur_s,asr,chosen,created,lang)"
                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", pid, t["line_id"], t["job_id"], t["take"],
-                   str(Path(ref_root) / t["ref"]), t["text"], t.get("sim"), t.get("cer"), t.get("dur"), t.get("dur_s"),
+                   os.path.normpath(Path(ref_root) / t["ref"]), t["text"], t.get("sim"), t.get("cer"), t.get("dur"), t.get("dur_s"),
                    t.get("asr"), t["chosen"], time.time(), lang)
     name = f"languages/{lang}/takes.json"
     if name in z.namelist():

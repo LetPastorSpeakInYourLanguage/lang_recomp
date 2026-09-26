@@ -29,7 +29,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 from app import settings  # noqa: E402
 
-CPU_STAGES = "ping,prefetch,separate,asr,align,diarize,voice"
+CPU_STAGES = "ping,prefetch,separate,asr,align,diarize,voice,bulk,pipeline"
 
 
 def setup_xpu(root: Path) -> None:

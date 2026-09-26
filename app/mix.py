@@ -103,6 +103,19 @@ def fit(lines: list[dict], total_s: float, p: dict) -> list[dict]:
 
 
 # ---- render ------------------------------------------------------------------------------
+_RUBBERBAND: bool | None = None
+
+
+def _tempo(f: float) -> str:
+    """Speed a take up by ``f`` keeping its pitch: Rubber Band (formants kept) when this
+    ffmpeg has it, else ffmpeg's own atempo."""
+    global _RUBBERBAND
+    if _RUBBERBAND is None:
+        out = subprocess.run(["ffmpeg", "-hide_banner", "-filters"], capture_output=True, text=True).stdout
+        _RUBBERBAND = " rubberband " in out
+    return f"rubberband=tempo={f:.4f}:formant=preserved:window=short" if _RUBBERBAND else f"atempo={f:.4f}"
+
+
 def params(pid: str) -> dict:
     return DEFAULTS | (db.meta(pid).get("mix") or {})
 
@@ -179,7 +192,7 @@ def render(pid: str, lang: str | None = None, update=lambda *a, **k: None) -> di
     for k, ((s, t), pl) in enumerate(zip(dubbed, placements)):
         update(0.1 + 0.7 * k / max(1, len(dubbed)), f"placing line {k + 1}/{len(dubbed)}")
         f = pl["factor"]
-        x = decode(t["path"], f"rubberband=tempo={f:.4f}:formant=preserved:window=short" if f > 1.001 else None)
+        x = decode(t["path"], _tempo(f) if f > 1.001 else None)
         gain_db = 0.0
         if p["loudness_follow"]:
             ref = speech_db(vocals[int(s["start"] * SR):int(s["end"] * SR)])
