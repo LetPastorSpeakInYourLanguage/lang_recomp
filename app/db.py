@@ -38,6 +38,12 @@ CREATE TABLE IF NOT EXISTS translations (
   locked INTEGER DEFAULT 0, provenance TEXT DEFAULT 'machine', updated REAL,
   PRIMARY KEY (project_id, sentence_id, lang)
 );
+-- A chapter runs from `start` to the next chapter's start; a line belongs to the
+-- chapter containing its start (app/chapters.py). Index and end are derived.
+CREATE TABLE IF NOT EXISTS chapters (
+  project_id TEXT, id INTEGER, start REAL, title TEXT DEFAULT '', updated REAL,
+  PRIMARY KEY (project_id, id)
+);
 CREATE TABLE IF NOT EXISTS takes (
   project_id TEXT, sentence_id INTEGER, job_id TEXT, take INTEGER, path TEXT, text TEXT,
   sim REAL, cer REAL, dur REAL, dur_s REAL, asr TEXT, chosen INTEGER DEFAULT 0, created REAL,
@@ -86,6 +92,20 @@ def _migrate(c: sqlite3.Connection) -> None:
         # so a translation cleared later can never be resurrected from it.
         c.execute("UPDATE sentences SET am='', am_locked=0 WHERE am<>'' AND EXISTS (SELECT 1 FROM translations t"
                   " WHERE t.project_id=sentences.project_id AND t.sentence_id=sentences.id)")
+    # Chapters used to be a flag on the first line of each chapter. Projects without
+    # chapter rows get them from the flags once; the flags are then cleared.
+    if "chapter_break" in scols:
+        have = {r[0] for r in c.execute("SELECT DISTINCT project_id FROM chapters")}
+        for (pid,) in c.execute("SELECT id FROM projects").fetchall():
+            if pid in have:
+                continue
+            first = c.execute("SELECT MIN(start) FROM sentences WHERE project_id=?", (pid,)).fetchone()[0] or 0.0
+            # a flag on the opening line meant nothing (the first chapter starts there anyway)
+            starts = [r[0] for r in c.execute("SELECT start FROM sentences WHERE project_id=? AND chapter_break=1"
+                                              " AND start>? ORDER BY start", (pid, first + 1e-3))]
+            c.executemany("INSERT INTO chapters (project_id,id,start,title,updated) VALUES (?,?,?,'',strftime('%s','now'))",
+                          [(pid, i, st) for i, st in enumerate([0.0, *starts], 1)])
+        c.execute("UPDATE sentences SET chapter_break=0 WHERE chapter_break<>0")
     c.commit()
 
 

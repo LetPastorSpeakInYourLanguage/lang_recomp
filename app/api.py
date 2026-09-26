@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import aligners, db, langs, mix, project, settings, tasks, voice
+from . import aligners, chapters, db, langs, mix, project, settings, tasks, voice
 
 app = FastAPI(title="Lang-Bridge")
 WEB = Path(__file__).resolve().parents[1] / "web" / "dist"
@@ -304,7 +304,7 @@ class SentPatch(BaseModel):
     tr_locked: bool | None = None
 
 
-LINE_FIELDS = ("text", "speaker", "chapter_break", "reviewed", "mode")
+LINE_FIELDS = ("text", "speaker", "reviewed", "mode")
 
 
 @app.patch("/api/projects/{pid}/sentences/{sid}")
@@ -323,6 +323,13 @@ def patch_sentence(pid: str, sid: int, body: SentPatch):
         # A hand edit locks the line, so re-translating never overwrites it.
         locked = changes.pop("tr_locked", True if text is not None else None)
         project.set_translation(pid, sid, lang, text, locked, provenance="human")
+    if "chapter_break" in changes:  # old flag API: a chapter starts at this line or not
+        cur = next(x for x in project.sentences(pid, lang) if x["id"] == sid)
+        if bool(changes.pop("chapter_break")) != bool(cur["chapter_head"]):
+            try:
+                chapters.toggle(pid, sid)
+            except ValueError as e:
+                raise HTTPException(400, str(e))
     for k in LINE_FIELDS:
         if k in changes:
             v = changes[k]
