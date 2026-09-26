@@ -117,6 +117,11 @@ def mix_dir(pid: str, lang: str | None = None) -> Path:
     """Renders live per language: mix/<lang>/. A render from before languages were
     data (files directly in mix/) is moved into the primary language's folder."""
     lang = project.lang_or_primary(pid, lang)
+    m = project.media_dir(pid)
+    if m is not None:  # a source whose media live in a device's library: its mixes live there too
+        d = m / "mix" / lang
+        d.mkdir(parents=True, exist_ok=True)
+        return d
     root = project.pdir(pid) / "mix"
     d = root / lang
     if not d.exists():
@@ -274,7 +279,7 @@ def export(pid: str, lang: str | None = None, update=lambda *a, **k: None) -> di
     if not fitp.exists() or not (mdir / "mix.wav").exists():
         raise RuntimeError("render the mix first (the last render did not finish)")
     summary = json.loads(fitp.read_text(encoding="utf-8"))
-    out = project.pdir(pid) / "export"
+    out = (project.media_dir(pid) or project.pdir(pid)) / "export"
     out.mkdir(exist_ok=True)
     base = out / pid
     # Target subtitles follow where the dub actually plays (the original line's time

@@ -37,11 +37,24 @@ def pdir(pid: str) -> Path:
     return d
 
 
+def media_dir(pid: str) -> Path | None:
+    """Where this source's media live when they are not in the project folder: its
+    folder in a device's library (on Drive, or the local worker's folder) — video, voice
+    stems, takes, mixes and exports, all read and written in place."""
+    at = db.meta(pid).get("media_dir")
+    return Path(at) if at else None
+
+
 def stem(pid: str, name: str) -> Path:
-    """A voice stem ('vocals' or 'background'): where a worker left it (on Drive, for
-    sources fetched and separated remotely), else in the project folder."""
+    """A voice stem ('vocals' or 'background'): where a worker left it, else in the
+    source's media folder, else in the project folder."""
     at = (db.meta(pid).get("stems") or {}).get(name)
-    return Path(at) if at else pdir(pid) / f"{name}.flac"
+    if at:
+        return Path(at)
+    m = media_dir(pid)
+    if m is not None and (m / f"{name}.flac").exists():
+        return m / f"{name}.flac"
+    return pdir(pid) / f"{name}.flac"
 
 
 def single_work(pid: str) -> str:
