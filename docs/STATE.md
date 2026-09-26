@@ -13,16 +13,16 @@ Hard-won lessons: [LESSONS.md](LESSONS.md).
 | | |
 |---|---|
 | **Repo** | `D:\py_self\lang_bridge_test` → GitHub `LetPastorSpeakInYourLanguage/lang_recomp` (public, MIT) |
-| **`main`** | A1–A2 merged locally (`93f9d85`); `origin/main` is still `d6d5e7c` — **not pushed** |
-| **Current branch** | `feat/chapters` (A3) — each commit verified alone; merge into `main` after the build pass |
+| **`main`** | A1–A3 + Transcript layout merged locally (`453404f`); `origin/main` is still `d6d5e7c` — **not pushed** |
+| **Current branch** | `feat/series` (A4) |
 | **Plan phase** | A1, A2, A3 **done**; next **A4** (series with multiple sources) |
 | **Tests** | 47 pass (`python -m pytest -q tests`); web typecheck + build pass |
 
 ### Next steps, in order
 
-1. Merge `feat/chapters` into `main` (`--no-ff`) after the build pass; rerun it on `main`.
-   Push only when the owner says so.
-2. New branch `feat/series` → Phase A4, then `feat/cast-linking` (A5), A6, A7, then
+1. Phase A4 on `feat/series`; merge into `main` after the build pass. Push only when the
+   owner says so.
+2. Then `feat/cast-linking` (A5), A6, A7, then
    Phase B (community server) — see PLAN.md.
 
 ### Working method the owner asked for
@@ -73,6 +73,8 @@ Test clip project: `camille-interview` (105 s, 28 lines, 2 speakers, all reviewe
   `PATCH …/chapters/{cid} {title}`; translate takes a chapter **id**. `chapter_break` is gone
   from the API; the column stays in SQLite, cleared by the one-shot migration.
 - Web: Transcript headers show "Chapter N" + editable title; Translate groups by chapter id.
+- Transcript layout (owner request): video + keys across the top (band locked to the video's
+  height, keys scroll inside), lines full width below.
 - Real DB migrated (camille: one chapter). Backup `data/backups/langbridge-20260926-111244.db`.
 
 ## What A1/A2 added (languages)
