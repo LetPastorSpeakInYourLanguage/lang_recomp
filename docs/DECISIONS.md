@@ -22,3 +22,9 @@
 | 18 | Never spawn subagents (owner's global rule) | `~/.claude/CLAUDE.md` |
 | 19 | Chapters are **time spans** with stable, never-reused ids; a line belongs to the chapter containing its start; index/end derived, not stored | Merge/split/reload never rewrite membership; community tasks can point at chapter ids |
 | 20 | Merging across a chapter start moves the chapter to the next line; a chapter left with no lines is dropped | The old flag silently joined two whole chapters |
+| 21 | **Series** group sources (show, channel, speaker, course, news, other); kind changes wording and defaults only; new sources take the series' languages and settings; removing a series keeps its videos | One model for every family of material the owner named |
+| 22 | Channels/playlists are **listed, never polled**: `yt-dlp --flat-playlist`, a person ticks videos; imports run **one at a time** (FIFO) | Slow link; YouTube etiquette; control stays with people |
+| 23 | **Clips** (saved spans, revisioned like recomposer cuts) and **collections** (flat, multi-membership, archive never deletes) are the team library; collections can later hold stage presets | Recomposer's accepted model, reused so Phase D ports cleanly |
+| 24 | A **recurring part** (intro, opener, outro, jingle, recurring) is a clip kind; it is **dubbed once at its origin** and reused where an occurrence is **confirmed** | Owner: "saved once"; fingerprint hits are proposals, people confirm (ADR-13 spirit) |
+| 25 | Occurrences found by **Chromaprint** (ffmpeg built-in) — sliding match for a known part, exact-value shift votes + frame check for discovery (Jellyfin Intro Skipper method) | No new dependency; fast (~8 s per hour of audio); proven method |
+| 26 | Lines only **fully inside** a confirmed occurrence are linked; partial ones are dubbed normally | Never drop words at a boundary |

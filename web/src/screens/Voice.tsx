@@ -20,7 +20,9 @@ export default function Voice({ project, state, onChanged }: { project: Project;
   const where = target || state?.active || "";
 
   if (!data) return <div className="p-16 text-11.5 text-faint">Loading…</div>;
-  const lines = data.lines.filter((l) => l.tr && (!l.speaker || byLabel[l.speaker]?.important !== 0));
+  // lines of a confirmed recurring part are voiced once, at its origin
+  const reused = data.lines.filter((l) => l.linked).length;
+  const lines = data.lines.filter((l) => l.tr && !l.linked && (!l.speaker || byLabel[l.speaker]?.important !== 0));
   const bar = <LangBar project={project} lang={lang} onChange={setLang} onAdded={onChanged} />;
   if (!lines.length) {
     return (
@@ -71,7 +73,7 @@ export default function Voice({ project, state, onChanged }: { project: Project;
           <div className="text-11.5 text-dim">
             Each line is spoken in its speaker's cloned voice, {e.takes} takes per line. Every take is scored for likeness to the
             speaker, how clearly the {langName(lang)} comes through, and fit to the original timing; the best is picked for you. Listen, swap
-            takes, regenerate.
+            takes, regenerate.{reused > 0 && ` ${reused} line${reused === 1 ? " belongs" : "s belong"} to recurring parts, voiced once at their origin and reused here.`}
           </div>
         </div>
         <Tag tone="accent">OmniVoice · {e.steps} steps · {e.speed}×</Tag>

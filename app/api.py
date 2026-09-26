@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import aligners, chapters, db, langs, mix, project, settings, tasks, voice
+from . import aligners, chapters, db, feeds, langs, library, mix, project, recurring, series, settings, tasks, voice
 
 app = FastAPI(title="Lang-Bridge")
 WEB = Path(__file__).resolve().parents[1] / "web" / "dist"
@@ -115,8 +115,382 @@ def list_projects():
 def new_project(body: NewProject):
     if not body.source.strip():
         raise HTTPException(400, "source is required")
-    return project.create(body.name.strip() or "Untitled", body.source, body.clip_start,
-                          body.clip_end, body.max_speakers, body.src_lang, body.tgt_lang)
+    try:
+        return project.create(body.name.strip() or "Untitled", body.source, body.clip_start,
+                              body.clip_end, body.max_speakers, body.src_lang, body.tgt_lang)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+# ---- series ------------------------------------------------------------------------------
+def _s(sid: str) -> dict:
+    try:
+        return series.get(sid)
+    except KeyError:
+        raise HTTPException(404, "no such series")
+
+
+class NewSeries(BaseModel):
+    name: str
+    kind: str = "other"
+    src_lang: str = "en"
+    targets: list[str] = ["am"]
+    feed_url: str | None = None
+    settings: dict = {}
+
+
+class SeriesPatch(BaseModel):
+    name: str | None = None
+    kind: str | None = None
+    src_lang: str | None = None
+    targets: list[str] | None = None
+    feed_url: str | None = None
+    settings: dict | None = None
+
+
+class NewSource(BaseModel):
+    name: str
+    source: str
+    clip_start: float | None = None
+    clip_end: float | None = None
+    max_speakers: int | None = None
+    origin_id: str | None = None
+    published: str | None = None
+
+
+@app.get("/api/series/kinds")
+def series_kinds():
+    return [{"kind": k, "label": v[0], "unit": v[1]} for k, v in series.KINDS.items()]
+
+
+@app.get("/api/series")
+def list_series():
+    return series.listing()
+
+
+@app.post("/api/series")
+def new_series(body: NewSeries):
+    if not body.name.strip():
+        raise HTTPException(400, "a series needs a name")
+    try:
+        return series.create(body.name, body.kind, body.src_lang, body.targets, body.feed_url, body.settings)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/series/{sid}")
+def get_series(sid: str):
+    return _s(sid) | {"sources": series.sources(sid)}
+
+
+@app.patch("/api/series/{sid}")
+def patch_series(sid: str, body: SeriesPatch):
+    _s(sid)
+    try:
+        return series.update(sid, **body.model_dump(exclude_none=True))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/series/{sid}/sources")
+def new_source(sid: str, body: NewSource):
+    _s(sid)
+    if not body.source.strip():
+        raise HTTPException(400, "source is required")
+    try:
+        return series.add_source(sid, body.name.strip() or "Untitled", body.source.strip(), body.clip_start,
+                                 body.clip_end, body.max_speakers, body.origin_id, body.published)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/api/series/{sid}")
+def delete_series(sid: str):
+    """Removes the grouping only; every source stays, as a standalone video."""
+    _s(sid)
+    return {"released": series.remove(sid)}
+
+
+@app.get("/api/series/{sid}/feed")
+def series_feed(sid: str, limit: int = 100):
+    """The channel/playlist's videos (listing only), each marked if already in the series."""
+    s = _s(sid)
+    if not s["feed_url"]:
+        raise HTTPException(400, "set the series' channel or playlist link first")
+    try:
+        got = feeds.listing(s["feed_url"], max(1, min(limit, 500)))
+    except Exception as e:
+        raise HTTPException(502, str(e))
+    have = {r["origin_id"] for r in db.rows("SELECT origin_id FROM projects WHERE series_id=?", sid)}
+    for e in got["entries"]:
+        e["added"] = e["id"] in have
+    return got
+
+
+class FeedPick(BaseModel):
+    items: list[dict]  # entries from the feed: {id, title, url}
+    clip_start: float | None = None
+    clip_end: float | None = None
+
+
+@app.post("/api/series/{sid}/feed/add")
+def add_from_feed(sid: str, body: FeedPick):
+    """Add the picked videos in order; their downloads run one at a time."""
+    _s(sid)
+    added, skipped = [], []
+    for it in body.items:
+        try:
+            p = series.add_source(sid, (it.get("title") or it["id"])[:120], it.get("url") or it["id"],
+                                  body.clip_start, body.clip_end, origin_id=it["id"])
+            added.append(p["id"])
+        except (ValueError, KeyError) as e:
+            skipped.append({"id": it.get("id"), "reason": str(e)})
+    return {"added": added, "skipped": skipped}
+
+
+# ---- library: clips and collections --------------------------------------------------------
+def _clip(cid: int) -> dict:
+    try:
+        return library.get_clip(cid)
+    except KeyError:
+        raise HTTPException(404, "no such clip")
+
+
+def _coll(cid: int) -> dict:
+    try:
+        return library.get_collection(cid)
+    except KeyError:
+        raise HTTPException(404, "no such collection")
+
+
+class NewClip(BaseModel):
+    source_id: str
+    title: str
+    kind: str = "clip"
+    note: str = ""
+    # the span: two line ids, a whole chapter, or explicit times
+    first_line: int | None = None
+    last_line: int | None = None
+    chapter_id: int | None = None
+    start: float | None = None
+    end: float | None = None
+
+
+class ClipPatch(BaseModel):
+    title: str | None = None
+    kind: str | None = None
+    note: str | None = None
+
+
+class Segments(BaseModel):
+    segments: list[dict]
+
+
+class Memberships(BaseModel):
+    collection_ids: list[int]
+
+
+class Named(BaseModel):
+    name: str
+
+
+@app.get("/api/clips/kinds")
+def clip_kinds():
+    return {"kinds": list(library.KINDS), "recurring": sorted(library.RECURRING)}
+
+
+@app.get("/api/clips")
+def list_clips(series: str | None = None, source: str | None = None, collection: int | None = None,
+               kind: str | None = None, deleted: bool = False, lang: str | None = None):
+    """Clips, each with its source's name and the languages whose mix is rendered (so
+    the clip can be played dubbed, as a slice of that mix)."""
+    out, seen = library.clips(series, source, collection, kind, deleted, lang), {}
+    for c in out:
+        pid = c["source_id"]
+        if pid not in seen:
+            p = db.row("SELECT name FROM projects WHERE id=?", pid)
+            seen[pid] = {"name": p["name"] if p else pid,
+                         "mixed": {t: (mix.mix_dir(pid, t) / "mix.wav").stat().st_mtime for t in project.targets(pid)
+                                   if (mix.mix_dir(pid, t) / "mix.wav").exists()} if p else {}}
+        c["source_name"], c["mixed"] = seen[pid]["name"], seen[pid]["mixed"]
+        if c["recurring"]:
+            c["occurrences"] = {st: 0 for st in recurring.STATUSES}
+            for o in recurring.occurrences(c["id"]):
+                c["occurrences"][o["status"]] += 1
+    return out
+
+
+@app.post("/api/clips")
+def new_clip(body: NewClip):
+    _p(body.source_id)
+    try:
+        if body.first_line is not None:
+            start, end = library.span_of_lines(body.source_id, body.first_line, body.last_line or body.first_line)
+        elif body.chapter_id is not None:
+            start, end = library.chapter_span(body.source_id, body.chapter_id)
+        elif body.start is not None and body.end is not None:
+            start, end = body.start, body.end
+        else:
+            raise ValueError("give the clip's lines, chapter or times")
+        return library.create_clip(body.source_id, start, end, body.title, body.kind, body.note)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/clips/{cid}")
+def get_clip(cid: int, rev: int | None = None, lang: str | None = None):
+    _clip(cid)
+    try:
+        c = library.get_clip(cid, rev)
+    except KeyError:
+        raise HTTPException(404, "no such revision")
+    return c | {"lines": library.clip_lines(c, lang)}
+
+
+@app.patch("/api/clips/{cid}")
+def patch_clip(cid: int, body: ClipPatch):
+    _clip(cid)
+    try:
+        return library.update_clip(cid, body.title, body.kind, body.note)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/clips/{cid}/revisions")
+def revise_clip(cid: int, body: Segments):
+    _clip(cid)
+    try:
+        return library.revise_clip(cid, body.segments)
+    except (ValueError, KeyError) as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/api/clips/{cid}")
+def delete_clip(cid: int):
+    _clip(cid)
+    return library.remove_clip(cid)
+
+
+@app.post("/api/clips/{cid}/restore")
+def restore_clip(cid: int):
+    _clip(cid)
+    return library.remove_clip(cid, restore=True)
+
+
+@app.put("/api/clips/{cid}/collections")
+def clip_collections(cid: int, body: Memberships):
+    _clip(cid)
+    try:
+        return {"collection_ids": library.set_memberships("clip", cid, body.collection_ids)}
+    except KeyError:
+        raise HTTPException(404, "no such collection")
+
+
+@app.post("/api/clips/{cid}/search")
+def search_clip(cid: int):
+    """Find a recurring clip in its series by audio; new hits are proposed."""
+    _clip(cid)
+    try:
+        return recurring.search(cid)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/clips/{cid}/occurrences")
+def clip_occurrences(cid: int):
+    _clip(cid)
+    return recurring.occurrences(cid)
+
+
+@app.post("/api/clips/{cid}/occurrences/confirm_all")
+def confirm_occurrences(cid: int):
+    _clip(cid)
+    return {"confirmed": recurring.confirm_all(cid)}
+
+
+class OccurrencePatch(BaseModel):
+    status: str
+
+
+@app.patch("/api/occurrences/{oid}")
+def patch_occurrence(oid: int, body: OccurrencePatch):
+    try:
+        return recurring.set_status(oid, body.status)
+    except KeyError:
+        raise HTTPException(404, "no such occurrence")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/collections")
+def list_collections(deleted: bool = False):
+    return library.collections(deleted)
+
+
+@app.post("/api/collections")
+def new_collection(body: Named):
+    try:
+        return library.create_collection(body.name)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.patch("/api/collections/{cid}")
+def rename_collection(cid: int, body: Named):
+    _coll(cid)
+    try:
+        return library.rename_collection(cid, body.name)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/api/collections/{cid}")
+def archive_collection(cid: int):
+    """Archives the folder; its clips stay."""
+    _coll(cid)
+    return library.archive_collection(cid)
+
+
+@app.post("/api/collections/{cid}/restore")
+def restore_collection(cid: int):
+    _coll(cid)
+    return library.archive_collection(cid, restore=True)
+
+
+@app.get("/api/series/{sid}/discover")
+def discover_parts(sid: str, min_s: float = 8.0):
+    """Stretches of sound the series' sources share: candidate intros and other
+    recurring parts. Nothing is stored until one is saved as a clip."""
+    _s(sid)
+    names = {r["id"]: r["name"] for r in db.rows("SELECT id, name FROM projects WHERE series_id=?", sid)}
+    out = recurring.discover(sid, max(4.0, min_s))
+    for c in out:
+        c["origin"]["source_name"] = names.get(c["origin"]["source_id"])
+        for m in c["members"]:
+            m["source_name"] = names.get(m["source_id"])
+    return out
+
+
+class Order(BaseModel):
+    ids: list[str]
+
+
+@app.put("/api/series/{sid}/order")
+def order_series(sid: str, body: Order):
+    _s(sid)
+    return series.reorder(sid, body.ids)
+
+
+class Attach(BaseModel):
+    series_id: str | None = None  # none = standalone
+
+
+@app.put("/api/projects/{pid}/series")
+def attach_project(pid: str, body: Attach):
+    _p(pid)
+    if body.series_id:
+        _s(body.series_id)
+    return series.attach(pid, body.series_id)
 
 
 @app.get("/api/projects/{pid}")

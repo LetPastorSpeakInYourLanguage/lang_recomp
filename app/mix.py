@@ -22,7 +22,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import db, langs, project, voice
+from . import db, langs, project, recurring, voice
 
 SR = 48000
 GAP_S = 0.08      # silence kept between consecutive dubbed lines
@@ -138,6 +138,8 @@ def render(pid: str, lang: str | None = None, update=lambda *a, **k: None) -> di
     chars = {c["label"]: c for c in db.rows("SELECT * FROM characters WHERE project_id=?", pid)}
     sents = project.sentences(pid, lang)
     takes = {t["sentence_id"]: t for t in voice.lines_takes(pid, chosen_only=True, lang=lang)}
+    # a recurring part's lines use the takes chosen at its origin, placed here
+    takes |= recurring.origin_takes(sents, lang)
 
     update(0.05, "decoding stems")
     background = decode(d / "background.flac")
@@ -191,7 +193,7 @@ def render(pid: str, lang: str | None = None, update=lambda *a, **k: None) -> di
             pl["clipped_s"] = round((len(x) - room) / SR, 2)
         dub[i0:i0 + min(room, len(x))] += x[:room]
         report.append(pl | {"speaker": s["speaker"], "gain_db": round(gain_db, 1), "tr": s["tr"], "src": s["text"],
-                            "take_id": t["take_id"]})
+                            "take_id": t["take_id"], "linked": (s.get("linked") or {}).get("title")})
 
     update(0.85, "mixing")
     # Original voice where it stays: extras' lines, dub gaps (missing takes), and

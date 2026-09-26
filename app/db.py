@@ -19,6 +19,12 @@ CREATE TABLE IF NOT EXISTS projects (
   tgt_lang TEXT DEFAULT 'am', max_speakers INTEGER, clip_start REAL, clip_end REAL,
   duration REAL, video TEXT, audio TEXT, created REAL, meta TEXT DEFAULT '{}'
 );
+-- A family of sources: a show's episodes, a channel, one speaker's talks, a course, a
+-- news programme. New sources inherit its languages and settings (app/series.py).
+CREATE TABLE IF NOT EXISTS series (
+  id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT DEFAULT 'other', feed_url TEXT,
+  src_lang TEXT DEFAULT 'en', targets TEXT DEFAULT '["am"]', settings TEXT DEFAULT '{}', created REAL
+);
 CREATE TABLE IF NOT EXISTS jobs (
   id TEXT PRIMARY KEY, project_id TEXT, stage TEXT, created REAL, role TEXT
 );
@@ -44,6 +50,31 @@ CREATE TABLE IF NOT EXISTS chapters (
   project_id TEXT, id INTEGER, start REAL, title TEXT DEFAULT '', updated REAL,
   PRIMARY KEY (project_id, id)
 );
+-- The team library (app/library.py). A clip is a saved span of a source; its spans are
+-- revisioned like recomposer's cut_revision, so a journey can pin what it used. Ids are
+-- AUTOINCREMENT: never reused. Removing is a soft delete; archiving a collection never
+-- touches its clips.
+CREATE TABLE IF NOT EXISTS clips (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, series_id TEXT, source_id TEXT NOT NULL, title TEXT NOT NULL,
+  kind TEXT DEFAULT 'clip', note TEXT DEFAULT '', created REAL, updated REAL, deleted INTEGER DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS clip_revisions (
+  clip_id INTEGER, rev INTEGER, segments TEXT NOT NULL, created REAL, PRIMARY KEY (clip_id, rev)
+);
+CREATE TABLE IF NOT EXISTS collections (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, created REAL, deleted INTEGER DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS collection_items (
+  collection_id INTEGER, item_type TEXT, item_id INTEGER, added REAL,
+  PRIMARY KEY (collection_id, item_type, item_id)
+);
+-- Where a recurring clip (intro, opener…) occurs in other sources (app/recurring.py).
+-- Found by fingerprint as 'proposed'; only a person makes it 'confirmed' or 'rejected',
+-- and a later search never changes their decision.
+CREATE TABLE IF NOT EXISTS clip_occurrences (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, clip_id INTEGER, source_id TEXT, start REAL, end REAL,
+  score REAL, status TEXT DEFAULT 'proposed', updated REAL
+);
 CREATE TABLE IF NOT EXISTS takes (
   project_id TEXT, sentence_id INTEGER, job_id TEXT, take INTEGER, path TEXT, text TEXT,
   sim REAL, cer REAL, dur REAL, dur_s REAL, asr TEXT, chosen INTEGER DEFAULT 0, created REAL,
@@ -68,6 +99,11 @@ def conn() -> sqlite3.Connection:
 
 
 def _migrate(c: sqlite3.Connection) -> None:
+    pcols = {r[1] for r in c.execute("PRAGMA table_info(projects)")}
+    # a project is a source; standalone ones have no series
+    for col, decl in (("series_id", "TEXT"), ("position", "REAL"), ("origin_id", "TEXT"), ("published", "TEXT")):
+        if col not in pcols:
+            c.execute(f"ALTER TABLE projects ADD COLUMN {col} {decl}")
     cols = {r[1] for r in c.execute("PRAGMA table_info(jobs)")}
     if "root" not in cols:  # jobs predating job-folder settings all went to Drive
         c.execute("ALTER TABLE jobs ADD COLUMN root TEXT DEFAULT 'colab'")

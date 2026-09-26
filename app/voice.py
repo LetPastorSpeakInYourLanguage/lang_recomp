@@ -63,7 +63,7 @@ def queue(pid: str, root_id: str | None = None, ids: list[int] | None = None, ta
         raise RuntimeError("no vocal stem yet: load the analysis results first")
     chars = characters_plan(pid)
     lines = [s for s in project.sentences(pid, lang) if s["tr"] and s["mode"] == "dub" and s["speaker"] in chars
-             and (not ids or s["id"] in ids)]
+             and not s["linked"] and (not ids or s["id"] in ids)]  # a recurring part is voiced at its origin
     if not lines:
         raise RuntimeError(f"nothing to voice in {langs.name(lang)}: translate the lines of important characters first")
     # The voice model wants the language's name; the scorer back-transcribes with the

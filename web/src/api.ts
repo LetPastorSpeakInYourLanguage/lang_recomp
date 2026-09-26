@@ -16,14 +16,47 @@ export interface Project {
   id: string; name: string; source: string; src_lang: string; tgt_lang: string;
   max_speakers: number | null; clip_start: number | null; clip_end: number | null; duration: number | null;
   created: number;
+  /** the series this source belongs to (null = standalone), its place in it, and its YouTube id */
+  series_id: string | null; position: number | null; origin_id: string | null; published: string | null;
   counts: { sentences: number; translated: number; translated_by_lang: Record<string, number>; reviewed: number; chapters: number;
-    characters: number; genders_set: number; kept: number };
+    characters: number; genders_set: number; kept: number; linked: number };
   /** target languages, primary first */
   targets: string[];
   analysis: Record<"separate" | "asr" | "diarize", string | null>;
   import: Task | null;
   meta: Record<string, unknown>;
 }
+
+export type SeriesKind = "show" | "channel" | "speaker" | "course" | "news" | "other";
+export interface Series {
+  id: string; name: string; kind: SeriesKind; feed_url: string | null; src_lang: string; targets: string[];
+  settings: { max_speakers?: number | null }; created: number;
+  /** what the series and one of its sources are called, e.g. "Channel" / "video" */
+  label: string; unit: string;
+  counts?: { sources: number; duration: number };
+  sources?: Project[];
+}
+export interface FeedEntry { id: string; title: string; url: string; duration: number | null; section: string; live: boolean; added: boolean }
+export type ClipKind = "clip" | "intro" | "opener" | "outro" | "jingle" | "recurring";
+export interface ClipLine { id: number; source_id: string; start: number; end: number; speaker: string | null; text: string; tr: string }
+export interface Clip {
+  id: number; series_id: string | null; source_id: string; source_name?: string; title: string; kind: ClipKind; note: string;
+  rev: number; segments: { source_id: string; start: number; end: number }[]; duration: number; recurring: boolean;
+  collections: number[]; deleted: number; lines?: ClipLine[];
+  /** recurring parts only: how many occurrences are in each state */
+  occurrences?: Record<OccurrenceStatus, number>;
+  /** languages whose mix of the source is rendered → its mtime (for cache-busting) */
+  mixed?: Record<string, number>;
+}
+export type OccurrenceStatus = "proposed" | "confirmed" | "rejected";
+export interface Occurrence { id: number; clip_id: number; source_id: string; source_name: string | null; start: number; end: number; score: number; status: OccurrenceStatus }
+export interface PartCandidate {
+  origin: { source_id: string; source_name?: string; start: number; end: number };
+  members: { source_id: string; source_name?: string; start: number; end: number; score: number }[];
+  sources: number; of: number; kind: ClipKind; duration: number;
+}
+export interface Collection { id: number; name: string; items: number; deleted: number }
+export interface NewVideo { name: string; source: string; clip_start?: number | null; clip_end?: number | null; max_speakers?: number | null }
 
 export interface Job { id: string; stage: string; role: string; root: string; created: number; state: string | null; progress: number | null; error: string | null; result: Record<string, unknown> | null; elapsed_s: number | null; heartbeat: number | null }
 
@@ -43,6 +76,8 @@ export interface MixParams { duck_db: number; keep_nonspeech: boolean; nonspeech
 export interface FitLine {
   id: number; start: number; end: number; factor: number; status: "fits" | "borrowed" | "stretched" | "squeezed" | "overflow";
   slot_start: number; slot_end: number; dur: number; overlap_s: number; speaker: string | null; gain_db: number; tr: string; src: string; take_id: number;
+  /** title of the recurring part whose take this is, when reused from its origin */
+  linked?: string | null;
 }
 export interface MixState {
   params: MixParams; defaults: MixParams; has_mix: boolean; mix_mtime: number | null;
@@ -54,7 +89,9 @@ export interface Budget { syllables: number; est_s: number; slot_s: number; rati
 export interface Sentence {
   id: number; speaker: string | null; start: number; end: number; slot_s: number; text: string;
   /** translation into `lang` */
-  lang: string; tr: string; tr_locked: number; tr_provenance: "machine" | "human" | "reviewed" | null;
+  lang: string; tr: string; tr_locked: number; tr_provenance: "machine" | "human" | "reviewed" | "linked" | null;
+  /** inside a confirmed recurring part: translated and voiced once, at its origin */
+  linked: { clip_id: number; title: string; kind: ClipKind; source_id: string; source_name: string | null; line_id: number | null } | null;
   /** id of the chapter holding the line; `chapter_head` marks the first line of a later chapter */
   chapter: number; chapter_head: number; reviewed: number; budget: Budget | null;
   /** effective: the person's choice, else the interjection suggestion */
@@ -82,8 +119,40 @@ export const api = {
   state: () => req<AppState>("GET", "/api/state"),
   projects: () => req<Project[]>("GET", "/api/projects"),
   project: (p: string) => req<Project>("GET", `/api/projects/${p}`),
-  create: (b: { name: string; source: string; clip_start?: number | null; clip_end?: number | null; max_speakers?: number | null }) =>
-    req<Project>("POST", "/api/projects", b),
+  create: (b: NewVideo & { src_lang?: string; tgt_lang?: string }) => req<Project>("POST", "/api/projects", b),
+  seriesKinds: () => req<{ kind: SeriesKind; label: string; unit: string }[]>("GET", "/api/series/kinds"),
+  seriesList: () => req<Series[]>("GET", "/api/series"),
+  series: (s: string) => req<Series>("GET", `/api/series/${s}`),
+  createSeries: (b: { name: string; kind: SeriesKind; src_lang: string; targets: string[]; feed_url?: string | null; settings?: Series["settings"] }) =>
+    req<Series>("POST", "/api/series", b),
+  patchSeries: (s: string, b: Partial<Pick<Series, "name" | "kind" | "src_lang" | "targets" | "feed_url" | "settings">>) =>
+    req<Series>("PATCH", `/api/series/${s}`, b),
+  addSource: (s: string, b: NewVideo & { origin_id?: string | null; published?: string | null }) =>
+    req<Project>("POST", `/api/series/${s}/sources`, b),
+  seriesFeed: (s: string, limit = 100) => req<{ title: string; channel: string | null; entries: FeedEntry[] }>("GET", `/api/series/${s}/feed?limit=${limit}`),
+  addFromFeed: (s: string, items: Pick<FeedEntry, "id" | "title" | "url">[], clip: { clip_start?: number | null; clip_end?: number | null } = {}) =>
+    req<{ added: string[]; skipped: { id: string; reason: string }[] }>("POST", `/api/series/${s}/feed/add`, { items, ...clip }),
+  clips: (q: { series?: string; source?: string; collection?: number; kind?: ClipKind; deleted?: boolean; lang?: string } = {}) =>
+    req<Clip[]>("GET", `/api/clips?${new URLSearchParams(Object.entries(q).filter(([, v]) => v !== undefined && v !== "").map(([k, v]) => [k, String(v)])).toString()}`),
+  createClip: (b: { source_id: string; title: string; kind?: ClipKind; note?: string; first_line?: number; last_line?: number; chapter_id?: number; start?: number; end?: number }) =>
+    req<Clip>("POST", "/api/clips", b),
+  patchClip: (id: number, b: Partial<Pick<Clip, "title" | "kind" | "note">>) => req<Clip>("PATCH", `/api/clips/${id}`, b),
+  removeClip: (id: number) => req<Clip>("DELETE", `/api/clips/${id}`),
+  restoreClip: (id: number) => req<Clip>("POST", `/api/clips/${id}/restore`),
+  setClipCollections: (id: number, collection_ids: number[]) => req<{ collection_ids: number[] }>("PUT", `/api/clips/${id}/collections`, { collection_ids }),
+  searchClip: (id: number) => req<Occurrence[]>("POST", `/api/clips/${id}/search`),
+  occurrences: (id: number) => req<Occurrence[]>("GET", `/api/clips/${id}/occurrences`),
+  setOccurrence: (id: number, status: OccurrenceStatus) => req<Occurrence>("PATCH", `/api/occurrences/${id}`, { status }),
+  confirmAll: (id: number) => req<{ confirmed: number }>("POST", `/api/clips/${id}/occurrences/confirm_all`),
+  discover: (s: string, min_s = 8) => req<PartCandidate[]>("GET", `/api/series/${s}/discover?min_s=${min_s}`),
+  collections: (deleted = false) => req<Collection[]>("GET", `/api/collections?deleted=${deleted}`),
+  createCollection: (name: string) => req<Collection>("POST", "/api/collections", { name }),
+  renameCollection: (id: number, name: string) => req<Collection>("PATCH", `/api/collections/${id}`, { name }),
+  archiveCollection: (id: number) => req<Collection>("DELETE", `/api/collections/${id}`),
+  restoreCollection: (id: number) => req<Collection>("POST", `/api/collections/${id}/restore`),
+  deleteSeries: (s: string) => req<{ released: number }>("DELETE", `/api/series/${s}`),
+  orderSeries: (s: string, ids: string[]) => req<Project[]>("PUT", `/api/series/${s}/order`, { ids }),
+  attachProject: (p: string, series_id: string | null) => req<Project>("PUT", `/api/projects/${p}/series`, { series_id }),
   analyze: (p: string, root?: string) => req("POST", `/api/projects/${p}/analyze`, { root }),
   settings: () => req<Settings>("GET", "/api/settings"),
   saveSettings: (s: Settings) => req<Settings>("PUT", "/api/settings", s),

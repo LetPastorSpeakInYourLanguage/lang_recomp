@@ -52,9 +52,10 @@ and `set_translation`).
    translation context, recording sessions and coarse journey moments. Migrated from flags;
    `C` key kept; titles editable in Transcript. `source_id` arrives with A4. No chapter
    `status` column: per-language task status lives on chapter tasks (Phase B).
-4. 🔜 **Series with multiple sources** — `series → sources (episodes/films) → chapters → lines`;
-   today's projects become sources in a series; per-source analysis unchanged.
-5. ⬜ **Cross-source characters** — characters at series level; `appearances(source_id,
+4. ✅ **Series, the team library and reusable parts** (approved 2026-09-26) — see
+   [A4 in detail](#a4-in-detail) below. Still to do with the owner: the end-to-end run on a
+   real playlist whose videos share an intro (so far proven on the synthetic sandbox).
+5. 🔜 **Cross-source characters** — characters at series level; `appearances(source_id,
    diarization_label, character_id, confidence, confirmed_by)`; match by diarization centroids
    (`diarization.json → centroids`) and WavLM x-vectors of voice banks (see
    `worker/lb_worker/tts/score.py`); **Series cast** screen to accept/reject/new; voice banks
@@ -62,6 +63,49 @@ and `set_translation`).
 6. ⬜ **Per-language keep-words** (`app/interjections.py`).
 7. ⬜ **Unknown-language path** — VAD-only segmentation (`asr` stage `params.transcribe=false`)
    → empty lines for manual transcription; optional MMS/Omnilingual drafts (provenance machine).
+
+### A4 in detail
+
+Material comes in families: TV series, podcast/YouTube **channels**, one **speaker's**
+talks/teachings, **education** channels, **news** with recurring anchors. Families repeat
+themselves (a sermon's 30 s opener, a show's 15 s intro, a sign-off), and teams keep
+reusable resources. Resources:
+
+| Resource | What | Used by |
+|---|---|---|
+| **Clip** | saved span of a source (snapped to lines), title, note, tags | library, collections, journeys |
+| **Recurring part** | clip of kind intro/opener/outro/jingle/recurring + its occurrences in other sources | dubbing: transcribed, translated, voiced **once**, reused everywhere it occurs |
+| **Collection** | flat, multi-membership folder of clips (later stage presets, journeys) | team library |
+| **Stage preset** | recomposer's reusable revisioned stage (copy-on-insert) | Phase D; collections can already hold it |
+
+Model:
+```
+series(id, name, kind, feed_url, src_lang, targets JSON, settings JSON, created)
+  kind ∈ show | channel | speaker | course | news | other   (wording + defaults only)
+projects  + series_id NULL, position REAL, origin_id TEXT (YouTube id), published TEXT
+clips(id, series_id, source_id, title, kind, note, created, deleted)
+clip_revisions(clip_id, rev, segments JSON [{source_id,start,end}], created)  ← recomposer cut_revision
+clip_occurrences(clip_id, source_id, start, end, offset, score, status proposed|confirmed|rejected, updated)
+collections(id, name, created, deleted)
+collection_items(collection_id, item_type clip|stage_preset, item_id, added)
+```
+Rules: occurrences are **proposals until a person confirms** (nothing auto-applied); ids never
+reused; archiving a collection never deletes clips; clip edits add a revision.
+
+As built: `app/series.py`, `app/feeds.py`, `app/library.py`, `app/fingerprint.py`,
+`app/recurring.py`; screens Library (Home), Series, Clips & collections; Transcript range
+select + **S**. Occurrence rows got their own id (`clip_occurrences.id`); a clip's `offset`
+is derived (occurrence start − origin start). `python -m app --data <dir>` +
+`scripts/make_sandbox.py` give a throwaway library with a synthetic three-episode show.
+
+Steps (branch `feat/series`): (1) series + sources, Library home, series defaults for new
+sources; (2) follow a channel/playlist — `yt-dlp --flat-playlist -J`, tick videos, import one
+at a time, dedupe by `origin_id`, no background polling; (3) clips (Transcript range → **S**)
+and collections; (4) `app/fingerprint.py` — ffmpeg Chromaprint (`-f chromaprint -fp_format
+raw`), sliding Hamming match, pairwise "find repeating parts" (Jellyfin Intro Skipper method)
+→ proposed occurrences, confirm UI; (5) reuse in dubbing — lines inside a confirmed occurrence
+are **linked**, skipped by Translate/Voice, and `mix.render` places the origin source's chosen
+takes shifted by the offset; (6) docs.
 
 ## Phase B — community server MVP (invited teams) ⬜
 
