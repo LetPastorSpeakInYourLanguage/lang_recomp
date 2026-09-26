@@ -1,0 +1,12 @@
+{"_type": "playlist", "id": "UCfake", "title": "Example Teachings", "channel": "Example Teachings", "uploader": "Example Teachings",
+ "entries": [
+  {"_type": "playlist", "id": "UCfake", "title": "Example Teachings - Videos", "entries": [
+    {"_type": "url", "ie_key": "Youtube", "id": "vid00000001", "title": "Sermon: Hope", "url": "https://www.youtube.com/watch?v=vid00000001", "duration": 1840, "live_status": null},
+    {"_type": "url", "ie_key": "Youtube", "id": "vid00000002", "title": "Sermon: Patience", "url": "https://www.youtube.com/watch?v=vid00000002", "duration": 1712, "live_status": null}]},
+  {"_type": "playlist", "id": "UCfake", "title": "Example Teachings - Live", "entries": [
+    {"_type": "url", "ie_key": "Youtube", "id": "vid00000003", "title": "Sunday service", "url": "https://www.youtube.com/watch?v=vid00000003", "duration": 5400, "live_status": "was_live"},
+    {"_type": "url", "ie_key": "Youtube", "id": "vid00000004", "title": "Next week", "url": "https://www.youtube.com/watch?v=vid00000004", "duration": null, "live_status": "is_upcoming"},
+    {"_type": "url", "ie_key": "Youtube", "id": "vid00000001", "title": "Sermon: Hope", "url": "https://www.youtube.com/watch?v=vid00000001", "duration": 1840, "live_status": null}]},
+  {"_type": "playlist", "id": "UCfake", "title": "Example Teachings - Shorts", "entries": [
+    {"_type": "url", "ie_key": "Youtube", "id": "sho00000001", "title": "One minute of hope", "url": "https://www.youtube.com/shorts/sho00000001", "duration": null, "live_status": null}]}
+ ]}

@@ -36,6 +36,7 @@ export interface Series {
   counts?: { sources: number; duration: number };
   sources?: Project[];
 }
+export interface FeedEntry { id: string; title: string; url: string; duration: number | null; section: string; live: boolean; added: boolean }
 export interface NewVideo { name: string; source: string; clip_start?: number | null; clip_end?: number | null; max_speakers?: number | null }
 
 export interface Job { id: string; stage: string; role: string; root: string; created: number; state: string | null; progress: number | null; error: string | null; result: Record<string, unknown> | null; elapsed_s: number | null; heartbeat: number | null }
@@ -105,6 +106,9 @@ export const api = {
     req<Series>("PATCH", `/api/series/${s}`, b),
   addSource: (s: string, b: NewVideo & { origin_id?: string | null; published?: string | null }) =>
     req<Project>("POST", `/api/series/${s}/sources`, b),
+  seriesFeed: (s: string, limit = 100) => req<{ title: string; channel: string | null; entries: FeedEntry[] }>("GET", `/api/series/${s}/feed?limit=${limit}`),
+  addFromFeed: (s: string, items: Pick<FeedEntry, "id" | "title" | "url">[], clip: { clip_start?: number | null; clip_end?: number | null } = {}) =>
+    req<{ added: string[]; skipped: { id: string; reason: string }[] }>("POST", `/api/series/${s}/feed/add`, { items, ...clip }),
   deleteSeries: (s: string) => req<{ released: number }>("DELETE", `/api/series/${s}`),
   orderSeries: (s: string, ids: string[]) => req<Project[]>("PUT", `/api/series/${s}/order`, { ids }),
   attachProject: (p: string, series_id: string | null) => req<Project>("PUT", `/api/projects/${p}/series`, { series_id }),

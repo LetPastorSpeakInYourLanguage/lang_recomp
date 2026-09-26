@@ -1,6 +1,6 @@
-import { ArrowDown, ArrowUp, Library, LogOut } from "lucide-react";
+import { ArrowDown, ArrowUp, Library, ListVideo, LogOut } from "lucide-react";
 import { useState } from "react";
-import { api, fmtTime, usePoll } from "../api";
+import { api, fmtTime, parseTime, usePoll, type FeedEntry } from "../api";
 import { go } from "../router";
 import VideoForm, { LangOptions } from "../shell/VideoForm";
 import { Button, Empty, Panel, Tag, stateTone } from "../ui";
@@ -69,6 +69,8 @@ export default function Series({ id, onChanged }: { id: string; onChanged: () =>
         </div>
       </Panel>
 
+      {d.feed_url && <FromFeed id={id} unit={d.unit} onAdded={() => void reload()} />}
+
       <Panel title={`Add a ${d.unit}`}>
         <VideoForm submitLabel={`Add ${d.unit}`} onSubmit={async (v) => { await api.addSource(id, v); await reload(); }}
           note={<>Takes <span className="font-mono">{d.src_lang}→{d.targets.join(",")}</span> from the series; downloads, then queues the analysis.</>} />
@@ -108,6 +110,76 @@ export default function Series({ id, onChanged }: { id: string; onChanged: () =>
         )}
       </Panel>
     </div>
+  );
+}
+
+/** Pick videos from the series' channel or playlist. Listing downloads nothing; the
+ *  picked videos are added in order and download one at a time. */
+function FromFeed({ id, unit, onAdded }: { id: string; unit: string; onAdded: () => void }) {
+  const [entries, setEntries] = useState<FeedEntry[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [hide, setHide] = useState<Set<string>>(new Set(["Shorts"]));
+  const [start, setStart] = useState("");
+  const [end, setEnd] = useState("");
+  const [note, setNote] = useState<string | null>(null);
+
+  async function check() {
+    setBusy(true); setErr(null); setNote(null);
+    try { setEntries((await api.seriesFeed(id)).entries); setPicked(new Set()); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  }
+
+  async function add() {
+    if (!entries) return;
+    setBusy(true); setErr(null);
+    try {
+      const items = entries.filter((e) => picked.has(e.id)).reverse(); // oldest first, like episodes
+      const r = await api.addFromFeed(id, items, { clip_start: parseTime(start), clip_end: parseTime(end) });
+      setNote(`Added ${r.added.length}; they download one at a time.${r.skipped.length ? ` Skipped ${r.skipped.length}.` : ""}`);
+      setEntries(entries.map((e) => (picked.has(e.id) ? { ...e, added: true } : e)));
+      setPicked(new Set());
+      onAdded();
+    } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  }
+
+  const sections = [...new Set((entries ?? []).map((e) => e.section))];
+  const shown = (entries ?? []).filter((e) => !hide.has(e.section));
+  const toggle = (set: Set<string>, v: string) => { const n = new Set(set); if (n.has(v)) n.delete(v); else n.add(v); return n; };
+  return (
+    <Panel title="From the channel"
+      actions={<Button onClick={() => void check()} disabled={busy}><ListVideo size={12} />{entries ? "Check again" : `Check for ${unit}s`}</Button>}>
+      {err && <div className="px-12 py-8 text-11 text-bad">{err}</div>}
+      {!entries && !err && <div className="px-12 py-10 text-11 text-faint">{busy ? "Listing the channel…" : `Lists the channel's ${unit}s without downloading any; pick which to add.`}</div>}
+      {entries && (
+        <>
+          <div className="px-12 py-8 flex items-center gap-10 flex-wrap border-b border-border text-11 text-dim">
+            {sections.map((sec) => (
+              <label key={sec} className="flex items-center gap-4"><input type="checkbox" checked={!hide.has(sec)} onChange={() => setHide(toggle(hide, sec))} />
+                {sec} <span className="font-mono text-faint">{entries.filter((e) => e.section === sec).length}</span></label>
+            ))}
+            <span className="flex-1" />
+            <span>clip</span>
+            <input className="field font-mono w-[64px]" value={start} onChange={(e) => setStart(e.target.value)} placeholder="0:00" title="Start of the part to take from each video" />
+            <input className="field font-mono w-[64px]" value={end} onChange={(e) => setEnd(e.target.value)} placeholder="end" title="End of the part to take (blank = whole video)" />
+            <Button variant="primary" disabled={!picked.size || busy} onClick={() => void add()}>Add {picked.size || ""} {unit}{picked.size === 1 ? "" : "s"}</Button>
+          </div>
+          {note && <div className="px-12 py-6 text-11 text-good">{note}</div>}
+          <div className="max-h-[320px] overflow-y-auto">
+            {shown.map((e) => (
+              <label key={e.id} className={`flex items-center gap-8 px-12 py-5 border-b border-border last:border-0 text-11.5 ${e.added || e.live ? "opacity-55" : "hover:bg-panel2 cursor-pointer"}`}>
+                <input type="checkbox" disabled={e.added || e.live} checked={picked.has(e.id)} onChange={() => setPicked(toggle(picked, e.id))} />
+                <span className="flex-1 truncate">{e.title}</span>
+                {e.added && <Tag tone="good">added</Tag>}
+                {e.live && <Tag>upcoming</Tag>}
+                <span className="font-mono text-10 text-faint w-[60px] text-right">{e.duration ? fmtTime(e.duration) : "–"}</span>
+              </label>
+            ))}
+            {!shown.length && <div className="px-12 py-8 text-11 text-faint">Nothing in the ticked sections.</div>}
+          </div>
+        </>
+      )}
+    </Panel>
   );
 }
 

@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import aligners, chapters, db, langs, mix, project, series, settings, tasks, voice
+from . import aligners, chapters, db, feeds, langs, mix, project, series, settings, tasks, voice
 
 app = FastAPI(title="Lang-Bridge")
 WEB = Path(__file__).resolve().parents[1] / "web" / "dist"
@@ -209,6 +209,43 @@ def delete_series(sid: str):
     """Removes the grouping only; every source stays, as a standalone video."""
     _s(sid)
     return {"released": series.remove(sid)}
+
+
+@app.get("/api/series/{sid}/feed")
+def series_feed(sid: str, limit: int = 100):
+    """The channel/playlist's videos (listing only), each marked if already in the series."""
+    s = _s(sid)
+    if not s["feed_url"]:
+        raise HTTPException(400, "set the series' channel or playlist link first")
+    try:
+        got = feeds.listing(s["feed_url"], max(1, min(limit, 500)))
+    except Exception as e:
+        raise HTTPException(502, str(e))
+    have = {r["origin_id"] for r in db.rows("SELECT origin_id FROM projects WHERE series_id=?", sid)}
+    for e in got["entries"]:
+        e["added"] = e["id"] in have
+    return got
+
+
+class FeedPick(BaseModel):
+    items: list[dict]  # entries from the feed: {id, title, url}
+    clip_start: float | None = None
+    clip_end: float | None = None
+
+
+@app.post("/api/series/{sid}/feed/add")
+def add_from_feed(sid: str, body: FeedPick):
+    """Add the picked videos in order; their downloads run one at a time."""
+    _s(sid)
+    added, skipped = [], []
+    for it in body.items:
+        try:
+            p = series.add_source(sid, (it.get("title") or it["id"])[:120], it.get("url") or it["id"],
+                                  body.clip_start, body.clip_end, origin_id=it["id"])
+            added.append(p["id"])
+        except (ValueError, KeyError) as e:
+            skipped.append({"id": it.get("id"), "reason": str(e)})
+    return {"added": added, "skipped": skipped}
 
 
 class Order(BaseModel):

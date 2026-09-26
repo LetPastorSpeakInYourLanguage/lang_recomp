@@ -62,7 +62,7 @@ def create(name: str, source: str, clip_start: float | None, clip_end: float | N
     extra = [t for t in extra_targets if t not in (tgt_lang, src_lang)]
     if extra:
         db.set_meta(pid, targets=extra)
-    tasks.start(pid, "import", _import, pid)
+    tasks.start(pid, "import", _import, pid, serial="import")  # downloads queue up, one at a time
     return get(pid)
 
 
