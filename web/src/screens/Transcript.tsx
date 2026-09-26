@@ -133,31 +133,35 @@ export default function Transcript({ project, onChanged }: { project: Project; o
 
   const reviewed = rows.filter((r) => r.reviewed).length;
   return (
-    <div className="flex-1 min-h-0 grid grid-cols-[minmax(320px,42%)_1fr] max-lg:grid-cols-1">
-      <div className="p-14 flex flex-col gap-10 min-h-0 border-r border-border bg-panel2">
+    <div className="flex-1 min-h-0 flex flex-col">
+      {/* Top band: the video, and beside it progress, messages and the keys. The lines get the rest. */}
+      <div className="shrink-0 p-14 grid grid-cols-[min(46%,calc(36vh*16/9))_1fr] gap-14 border-b border-border bg-panel2">
         <video ref={video} src={api.media(project.id, "video")} controls className="w-full rounded-3 bg-black aspect-video" />
-        <div className="flex items-center gap-8 text-11 text-dim">
-          <span className="font-mono">{reviewed}/{rows.length} reviewed</span>
-          <div className="flex-1 h-4 bg-panel3 rounded-full overflow-hidden"><div className="h-full bg-good" style={{ width: `${rows.length ? (reviewed / rows.length) * 100 : 0}%` }} /></div>
-        </div>
-        {note && <div className="border border-accent bg-soft rounded-3 px-10 py-6 text-11 text-text flex gap-8"><span className="flex-1">{note}</span>
-          <button onClick={() => setNote(null)} className="bg-transparent border-0 text-dim p-0">×</button></div>}
-        <div className="border border-border rounded-3 bg-panel p-10 text-11 text-dim flex flex-col gap-4">
-          <div className="flex items-center gap-6 font-semibold text-text"><Keyboard size={12} />Keys</div>
-          <div className="grid grid-cols-[70px_1fr] gap-y-2 font-mono text-10.5">
-            <span>J / K</span><span className="font-sans">next / previous line</span>
-            <span>Space</span><span className="font-sans">play the line</span>
-            <span>Enter</span><span className="font-sans">edit text (Esc to leave)</span>
-            <span>1–{Math.max(1, cast.length)}</span><span className="font-sans">set speaker: {cast.map((c, i) => `${i + 1} ${c.name}`).join(", ")}</span>
-            <span>R</span><span className="font-sans">mark reviewed and move on</span>
-            <span>C</span><span className="font-sans">start a new chapter here, or remove the one this line starts (translation context stops at chapters)</span>
-            <span>M</span><span className="font-sans">merge with the next line</span>
-            <span>Ctrl+Enter</span><span className="font-sans">while editing: split the line at the cursor</span>
+        {/* as tall as the video, no taller: the keys scroll inside it */}
+        <div className="relative min-w-0"><div className="absolute inset-0 flex flex-col gap-8">
+          <div className="flex items-center gap-8 text-11 text-dim">
+            <span className="font-mono">{reviewed}/{rows.length} reviewed</span>
+            <div className="flex-1 h-4 bg-panel3 rounded-full overflow-hidden"><div className="h-full bg-good" style={{ width: `${rows.length ? (reviewed / rows.length) * 100 : 0}%` }} /></div>
           </div>
-        </div>
+          {note && <div className="border border-accent bg-soft rounded-3 px-10 py-6 text-11 text-text flex gap-8"><span className="flex-1">{note}</span>
+            <button onClick={() => setNote(null)} className="bg-transparent border-0 text-dim p-0">×</button></div>}
+          <div className="border border-border rounded-3 bg-panel p-10 text-11 text-dim flex flex-col gap-4 min-h-0 overflow-y-auto">
+            <div className="flex items-center gap-6 font-semibold text-text"><Keyboard size={12} />Keys</div>
+            <div className="grid grid-cols-[70px_1fr_70px_1fr] max-xl:grid-cols-[70px_1fr] gap-x-14 gap-y-2 font-mono text-10.5">
+              <span>J / K</span><span className="font-sans">next / previous line</span>
+              <span>Space</span><span className="font-sans">play the line</span>
+              <span>Enter</span><span className="font-sans">edit text (Esc to leave)</span>
+              <span>Ctrl+Enter</span><span className="font-sans">while editing: split the line at the cursor</span>
+              <span>1–{Math.max(1, cast.length)}</span><span className="font-sans">set speaker: {cast.map((c, i) => `${i + 1} ${c.name}`).join(", ")}</span>
+              <span>M</span><span className="font-sans">merge with the next line</span>
+              <span>R</span><span className="font-sans">mark reviewed and move on</span>
+              <span>C</span><span className="font-sans">start a new chapter here, or remove the one this line starts (translation context stops at chapters)</span>
+            </div>
+          </div>
+        </div></div>
       </div>
 
-      <div ref={listRef} className="overflow-y-auto min-h-0 p-14 flex flex-col gap-0">
+      <div ref={listRef} className="flex-1 overflow-y-auto min-h-0 p-14 flex flex-col gap-0">
         {rows.map((s, i) => {
           const c = s.speaker ? byLabel[s.speaker] : undefined;
           const head = i === 0 || !!s.chapter_head;
