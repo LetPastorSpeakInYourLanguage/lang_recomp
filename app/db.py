@@ -68,6 +68,13 @@ CREATE TABLE IF NOT EXISTS collection_items (
   collection_id INTEGER, item_type TEXT, item_id INTEGER, added REAL,
   PRIMARY KEY (collection_id, item_type, item_id)
 );
+-- Where a recurring clip (intro, opener…) occurs in other sources (app/recurring.py).
+-- Found by fingerprint as 'proposed'; only a person makes it 'confirmed' or 'rejected',
+-- and a later search never changes their decision.
+CREATE TABLE IF NOT EXISTS clip_occurrences (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, clip_id INTEGER, source_id TEXT, start REAL, end REAL,
+  score REAL, status TEXT DEFAULT 'proposed', updated REAL
+);
 CREATE TABLE IF NOT EXISTS takes (
   project_id TEXT, sentence_id INTEGER, job_id TEXT, take INTEGER, path TEXT, text TEXT,
   sim REAL, cer REAL, dur REAL, dur_s REAL, asr TEXT, chosen INTEGER DEFAULT 0, created REAL,

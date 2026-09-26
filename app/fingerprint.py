@@ -109,6 +109,9 @@ def shared_runs(a: np.ndarray, b: np.ndarray, min_s: float = 8.0, max_bits: floa
     index: dict[int, list[int]] = {}
     for i, v in enumerate(a.tolist()):
         index.setdefault(v, []).append(i)
+    # Silence and steady tones repeat one value many times; they would vote for every
+    # shift at once (and cost quadratic time), so they do not vote.
+    index = {v: p for v, p in index.items() if len(p) <= 20}
     votes = np.zeros(len(a) + len(b), dtype=np.int32)  # shift = i_a - i_b + len(b)
     for j, v in enumerate(b.tolist()):
         for i in index.get(v, ()):

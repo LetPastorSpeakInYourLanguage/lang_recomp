@@ -96,6 +96,11 @@ def _import(pid: str, update) -> None:
     dur = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
                                 "-of", "csv=p=0", str(video)], capture_output=True, text=True).stdout or 0)
     db.run("UPDATE projects SET video=?, audio=?, duration=? WHERE id=?", str(video), str(audio), dur, pid)
+    from . import recurring  # (imports project) — fingerprint now, so finding recurring parts is quick later
+    try:
+        recurring.source_print(pid)
+    except Exception as e:  # never fail an import over it; it is computed on demand again
+        update(None, f"fingerprint skipped: {e}")
     update(0.85, f"sending audio to {settings.root()['name']}")
     analyze(pid)
 

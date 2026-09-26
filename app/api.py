@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import aligners, chapters, db, feeds, langs, library, mix, project, series, settings, tasks, voice
+from . import aligners, chapters, db, feeds, langs, library, mix, project, recurring, series, settings, tasks, voice
 
 app = FastAPI(title="Lang-Bridge")
 WEB = Path(__file__).resolve().parents[1] / "web" / "dist"
@@ -313,6 +313,10 @@ def list_clips(series: str | None = None, source: str | None = None, collection:
                          "mixed": {t: (mix.mix_dir(pid, t) / "mix.wav").stat().st_mtime for t in project.targets(pid)
                                    if (mix.mix_dir(pid, t) / "mix.wav").exists()} if p else {}}
         c["source_name"], c["mixed"] = seen[pid]["name"], seen[pid]["mixed"]
+        if c["recurring"]:
+            c["occurrences"] = {st: 0 for st in recurring.STATUSES}
+            for o in recurring.occurrences(c["id"]):
+                c["occurrences"][o["status"]] += 1
     return out
 
 
@@ -382,6 +386,42 @@ def clip_collections(cid: int, body: Memberships):
         raise HTTPException(404, "no such collection")
 
 
+@app.post("/api/clips/{cid}/search")
+def search_clip(cid: int):
+    """Find a recurring clip in its series by audio; new hits are proposed."""
+    _clip(cid)
+    try:
+        return recurring.search(cid)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/clips/{cid}/occurrences")
+def clip_occurrences(cid: int):
+    _clip(cid)
+    return recurring.occurrences(cid)
+
+
+@app.post("/api/clips/{cid}/occurrences/confirm_all")
+def confirm_occurrences(cid: int):
+    _clip(cid)
+    return {"confirmed": recurring.confirm_all(cid)}
+
+
+class OccurrencePatch(BaseModel):
+    status: str
+
+
+@app.patch("/api/occurrences/{oid}")
+def patch_occurrence(oid: int, body: OccurrencePatch):
+    try:
+        return recurring.set_status(oid, body.status)
+    except KeyError:
+        raise HTTPException(404, "no such occurrence")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 @app.get("/api/collections")
 def list_collections(deleted: bool = False):
     return library.collections(deleted)
@@ -415,6 +455,20 @@ def archive_collection(cid: int):
 def restore_collection(cid: int):
     _coll(cid)
     return library.archive_collection(cid, restore=True)
+
+
+@app.get("/api/series/{sid}/discover")
+def discover_parts(sid: str, min_s: float = 8.0):
+    """Stretches of sound the series' sources share: candidate intros and other
+    recurring parts. Nothing is stored until one is saved as a clip."""
+    _s(sid)
+    names = {r["id"]: r["name"] for r in db.rows("SELECT id, name FROM projects WHERE series_id=?", sid)}
+    out = recurring.discover(sid, max(4.0, min_s))
+    for c in out:
+        c["origin"]["source_name"] = names.get(c["origin"]["source_id"])
+        for m in c["members"]:
+            m["source_name"] = names.get(m["source_id"])
+    return out
 
 
 class Order(BaseModel):
