@@ -36,18 +36,26 @@ def separate(ctx) -> dict:
             "files": ["vocals.flac", "background.flac"]}
 
 
-def load_separator(model_name: str | None = None, overlap: int = 2, log=print):
+def load_separator(model_name: str | None = None, overlap: int = 2, log=print, batch_size: int = 1,
+                   autocast: bool = False, native_fp16: bool = False):
+    """A loaded separator. ``batch_size`` windows go through the model at once; with
+    ``autocast`` / ``native_fp16`` it runs in half precision (fast on T4 tensor cores).
+    The bench (lb_worker.bench.gpu) measures which settings are safe and fastest."""
     ensure("audio-separator[gpu]" if device() == "cuda" else "audio-separator[cpu]", probe="audio_separator")
     ensure("audioread", probe="audioread")
+    import inspect
+
     from audio_separator.separator import Separator
 
     patch_separator_download(log)
     enable_xpu_for_separator(log)
+    extra = {k: v for k, v in {"use_autocast": autocast, "use_native_fp16": native_fp16}.items()
+             if v and k in inspect.signature(Separator.__init__).parameters}  # older versions lack them
     # overlap 2 (library default 8): a quarter of the windows; on the test clip its
     # vocals matched overlap 8 to 65 dB, far below audibility.
     s = Separator(output_format="FLAC", model_file_dir=str(cache_dir("audio-separator")),
                   mdxc_params={"segment_size": 256, "override_model_segment_size": False,
-                               "batch_size": 1, "overlap": overlap, "pitch_shift": 0})
+                               "batch_size": batch_size, "overlap": overlap, "pitch_shift": 0}, **extra)
     s.load_model(model_name) if model_name else s.load_model()
     return s
 

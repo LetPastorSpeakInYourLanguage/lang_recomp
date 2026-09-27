@@ -14,6 +14,7 @@ unrelated sound differs in about half the bits. Two searches use that:
 """
 from __future__ import annotations
 
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -35,12 +36,31 @@ TRIM_BITS = 5.0             # a run's edge frames (3-frame mean) must match this
 
 
 def compute(audio: str | Path) -> np.ndarray:
-    """The Chromaprint frames of an audio or video file (raw uint32)."""
+    """The Chromaprint frames of an audio or video file (raw uint32). Uses ffmpeg's
+    chromaprint muxer; an ffmpeg built without it (Colab's, Kaggle's) falls back to
+    Chromaprint's own ``fpcalc`` (apt ``libchromaprint-tools``), same default algorithm."""
     p = subprocess.run(["ffmpeg", "-v", "error", "-i", str(audio), "-vn", "-ac", "1",
                         "-f", "chromaprint", "-fp_format", "raw", "-"], capture_output=True)
-    if p.returncode:
-        raise RuntimeError(f"ffmpeg chromaprint failed: {p.stderr.decode(errors='replace')[-300:]}")
-    return np.frombuffer(p.stdout, dtype="<u4").copy()
+    if p.returncode == 0:
+        return np.frombuffer(p.stdout, dtype="<u4").copy()
+    if shutil.which("fpcalc"):
+        return fpcalc(audio)
+    raise RuntimeError(f"ffmpeg chromaprint failed and fpcalc is not installed: "
+                       f"{p.stderr.decode(errors='replace')[-300:]}")
+
+
+def fpcalc(audio: str | Path) -> np.ndarray:
+    """The same frames through Chromaprint's command-line tool (whole file)."""
+    p = subprocess.run(["fpcalc", "-raw", "-length", "0", str(audio)], capture_output=True, text=True)
+    line = next((ln for ln in p.stdout.splitlines() if ln.startswith("FINGERPRINT=")), None)
+    if p.returncode or line is None:
+        raise RuntimeError(f"fpcalc failed: {(p.stderr or p.stdout)[-300:]}")
+    return parse_raw(line[len("FINGERPRINT="):])
+
+
+def parse_raw(text: str) -> np.ndarray:
+    """fpcalc's comma-separated raw items (signed or unsigned, by version) → uint32."""
+    return np.array([int(x) & 0xFFFFFFFF for x in text.split(",") if x.strip()], dtype=np.uint32)
 
 
 def cached(audio: Path, cache: Path) -> np.ndarray:
