@@ -132,13 +132,14 @@ RUN_WHISPER = True  #@param {{type:"boolean"}}
 RUN_OMNIVOICE = True  #@param {{type:"boolean"}}
 RUN_IDENTITY = True  #@param {{type:"boolean"}}
 import os
-OUT = "/kaggle/working/lb-bench" if os.path.exists("/kaggle") else "/content/lb-bench"
+KAGGLE = bool(os.environ.get("KAGGLE_KERNEL_RUN_TYPE"))  # (Colab also has a /kaggle folder)
+OUT = "/kaggle/working/lb-bench" if KAGGLE else "/content/lb-bench"
 #@markdown Results go to `OUT` (`/content/lb-bench` on Colab, `/kaggle/working/lb-bench` on Kaggle).
 """),
     cell("code", f"""
 #@title Get Lang-Bridge (branch {BRANCH})
 import os, subprocess, sys
-CODE = '/kaggle/working/lang_recomp' if os.path.exists('/kaggle') else '/content/lang_recomp'
+CODE = '/kaggle/working/lang_recomp' if KAGGLE else '/content/lang_recomp'
 if not os.path.exists(CODE):
     subprocess.run(['git', 'clone', '-q', '--depth', '1', '-b', '{BRANCH}', '{REPO}', CODE], check=True)
 else:
