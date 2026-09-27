@@ -14,7 +14,8 @@ local disks); then teams working on shared metadata with distributed compute.*
 
 | Tag | Plan | Doc | State |
 |---|---|---|---|
-| TEAM | Team hub: shared metadata, media on everyone's devices, distributed compute | [TEAM.md](TEAM.md) | approved, not started |
+| SCALE | Hosted team hub (Supabase), media identity by content, voicing packs, work board, claims, R2 audio, LLM translation bake-off, OmniVoice refs | [SCALE_RESEARCH.md](SCALE_RESEARCH.md) | **research, awaiting owner decisions** (open questions at its end) |
+| TEAM | Team hub: shared metadata, media on everyone's devices, distributed compute | [TEAM.md](TEAM.md) | approved, not started | — hub mode on the coordinator's PC may be replaced by SCALE §2
 | LIB | Library folders (Drive + local disks), folder standard | [LIBRARY_FOLDERS.md](LIBRARY_FOLDERS.md), `app/libraries.py` | built, not yet used on real folders |
 | RES | Research notebook: the worker is a pipeline you run by hand on a GPU, not a job picker | [colab/README.md](../colab/README.md), `worker/lb_worker/research.py` | built + stub-tested; **first real Colab run pending** |
 | RUN | Colab/device runs end to end, captions trial, batching | `app/runs.py`, `worker/lb_worker/stages/run.py` | built + stub-tested, **not run on Colab yet** |
@@ -55,6 +56,19 @@ local disks); then teams working on shared metadata with distributed compute.*
 - [ ] **TEAM 4** Device-addressed runs through the hub; members upload results; coordinator's run board.
 - [ ] **TEAM 5** Edit safety: row versions (409), op log, "who changed what" in the UI.
 - [ ] **SEC** API has no authentication (fine on localhost): required before hub mode listens on the LAN (TEAM 2).
+
+- [ ] **SCALE** Owner decisions: team works private or public; one Supabase project for all or one per team creator; rights for storing dubbed audio centrally. (docs/SCALE_RESEARCH.md, end)
+- [ ] **SCALE 1** Media identity: link identity + quick hash + Chromaprint fingerprint with time offset; `media_copies`; "open with my copy" (supersedes the full-SHA-256 idea).
+- [ ] **SCALE 2** Supabase team hub: schema, RLS by team, sign-in in the app, device keys for notebooks, local-first sync with row versions (replaces TEAM 2 + TEAM 5 if approved).
+- [ ] **SCALE 3** Selective export (videos × layers: work / voicings of a language / mix), voicing packs, inbox auto-detect in the working folder.
+- [ ] **SCALE 4** Work board: videos × stages (pending/running/done/checked/stale/failed), recommended order with a cast pass, re-run selected cells.
+- [ ] **SCALE 5** Claims with leases so two members never run the same video; notebook takes a team device key; Kaggle (2×T4) notebook.
+- [ ] **SCALE 6** Generated audio on Cloudflare R2 behind a storage interface (signed URLs via an edge function); Telegram only as optional "publish to channel".
+- [ ] **SCALE 7** Translation bake-off on Colab (llama.cpp): NLLB-3.3B vs TranslateGemma-12B vs Gemma 4, scored by AfriCOMET-QE + people; then the Fit step (timing-aware shortening, manual pick).
+- [ ] **SCALE 8** OmniVoice reference 6–10 s (today ~12–20 s, `banks.TARGET_S`), best-of-N reference by held-out score.
+- [ ] **RUN** Colab: overlap CPU and GPU in every phase (voice→mix per video, decode/VAD of the next group during Whisper).
+- [ ] **RUN** Separation is the biggest fixed cost (~305 s per 6-min video on a T4, run #1): try separator `batch_size`, fp16 autocast, a lighter speech model; never separate a video twice (team-shared stems / cache).
+- [ ] **RUN** OmniVoice in batches (`omnivoice-infer-batch` / batched `generate`) instead of one take per call in `tts/omnivoice_gen.py`; measure takes/min on a T4.
 
 ## P2 — planned phases
 
