@@ -14,7 +14,7 @@ local disks); then teams working on shared metadata with distributed compute.*
 
 | Tag | Plan | Doc | State |
 |---|---|---|---|
-| SCALE | Hosted team hub (Supabase), media identity by content, voicing packs, work board, claims, R2 audio, LLM translation bake-off, OmniVoice refs | [SCALE_RESEARCH.md](SCALE_RESEARCH.md) | **research, awaiting owner decisions** (open questions at its end) |
+| SCALE | Decoupled notebooks ↔ app through a workspace folder, one Supabase, HF buckets, media identity, translation loop (branch `exp/scale`) | [SCALE_DESIGN.md](SCALE_DESIGN.md) (+ [research](SCALE_RESEARCH.md)) | **design; certification experiments E1–E6 next, then the build plan** |
 | TEAM | Team hub: shared metadata, media on everyone's devices, distributed compute | [TEAM.md](TEAM.md) | approved, not started | — hub mode on the coordinator's PC may be replaced by SCALE §2
 | LIB | Library folders (Drive + local disks), folder standard | [LIBRARY_FOLDERS.md](LIBRARY_FOLDERS.md), `app/libraries.py` | built, not yet used on real folders |
 | RES | Research notebook: the worker is a pipeline you run by hand on a GPU, not a job picker | [colab/README.md](../colab/README.md), `worker/lb_worker/research.py` | built + stub-tested; **first real Colab run pending** |
@@ -57,7 +57,8 @@ local disks); then teams working on shared metadata with distributed compute.*
 - [ ] **TEAM 5** Edit safety: row versions (409), op log, "who changed what" in the UI.
 - [ ] **SEC** API has no authentication (fine on localhost): required before hub mode listens on the LAN (TEAM 2).
 
-- [ ] **SCALE** Owner decisions: team works private or public; one Supabase project for all or one per team creator; rights for storing dubbed audio centrally. (docs/SCALE_RESEARCH.md, end)
+- [x] **SCALE** Owner decisions (2026-09-27): content and code may be public; one Supabase for ~10 teams; local folders as well as links; notebooks decoupled from the app; work on branch `exp/scale`.
+- [ ] **SCALE E1–E6** Certification experiments (SCALE_DESIGN.md §9): GPU bench, identity, translation loop + LLM, OmniVoice ref length, Supabase + bucket round trip, Drive two-writer test. Then the build plan.
 - [ ] **SCALE 1** Media identity: link identity + quick hash + Chromaprint fingerprint with time offset; `media_copies`; "open with my copy" (supersedes the full-SHA-256 idea).
 - [ ] **SCALE 2** Supabase team hub: schema, RLS by team, sign-in in the app, device keys for notebooks, local-first sync with row versions (replaces TEAM 2 + TEAM 5 if approved).
 - [ ] **SCALE 3** Selective export (videos × layers: work / voicings of a language / mix), voicing packs, inbox auto-detect in the working folder.

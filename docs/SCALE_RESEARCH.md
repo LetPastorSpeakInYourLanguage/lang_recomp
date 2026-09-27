@@ -1,6 +1,8 @@
 # Research: many people, many devices, one team's work
 
-Status: research (2026-09-27), not yet a plan. It answers the owner's "upgrade thoughts"
+Status: research (2026-09-27), background for [SCALE_DESIGN.md](SCALE_DESIGN.md), which
+supersedes it where they differ (owner decisions: one Supabase, public content, HF Storage
+Buckets instead of R2, notebooks and app decoupled through a workspace folder). It answers the owner's "upgrade thoughts"
 of 2026-09-27 and changes parts of [TEAM.md](TEAM.md) (the hub on the coordinator's PC).
 Each section ends with a recommendation; the list at the end is what would go into
 [BACKLOG.md](BACKLOG.md) once agreed.
