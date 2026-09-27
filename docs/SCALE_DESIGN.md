@@ -176,11 +176,19 @@ Per **chapter** (so the model sees the context), per target language:
 All steps are logged per line (`tr.<lang>.json`: rounds, candidates, checks), so people
 see *why* an option is recommended and a better model later can re-run only step 3–6.
 
-LLM choice is **not certified yet** (E3). Candidates that fit a free T4 (4-bit) or
-Kaggle's 2 × T4: Gemma 4 E4B, Gemma 4 26B MoE (2 × T4), TranslateGemma 12B (Amharic is
-not among its 55 benchmarked languages: test it, do not assume it), NLLB-200 3.3B as a
-translator only; optionally the Gemini API if its terms suit (content is public anyway).
-Google Translate stays in the loop as a strong baseline and as the back-translator.
+**All models run inside the notebook** on its GPU (no API keys, no per-call cost); they
+run one after another, each loaded once per phase. Two roles, not certified yet (E3):
+
+| Role | Steps | Candidates (4-bit on a free T4, or Kaggle's 2 × T4) |
+|---|---|---|
+| Translator | 3c | **TranslateGemma** 4B / 12B (Amharic is not among its 55 benchmarked languages: test it, do not assume it), NLLB-200 3.3B |
+| Instruction model | 2, 4 (judge), 5 | **Gemma 4** E4B (one T4) or 26B MoE (2 × T4), Gemma 3 12B |
+
+TranslateGemma is tuned to translate, not to follow editing instructions, so it cannot
+do the rephrase / judge / revise steps; a general Gemma does those. Google Translate
+stays in the loop as a baseline translator and as the back-translator. A hosted model
+(Gemini API, strongest on Amharic in AfroBench) is only a **reference point in E3**; if it
+wins clearly it could become an opt-in step with a team's own key, never a requirement.
 
 ## 6. The notebook
 
