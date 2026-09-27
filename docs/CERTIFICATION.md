@@ -33,9 +33,42 @@ words. → On this PC Whisper is as slow as the audio; long libraries belong on 
 
 **OmniVoice** (Arc, 16 takes, 16 steps): _running_.
 
-### Colab T4 / Kaggle 2 × T4
+### Colab T4, 2026-09-27 (3 × 130 s excerpts of 6 Minute English, 390 s of audio)
 
-_Owner runs `colab/bench_gpu_identity.ipynb` (branch `exp/scale`) and pastes the summary._
+**Separation** (BS-RoFormer, overlap 2):
+
+| Setting | Time | × real time | GPU busy | GPU memory | vs batch 1 |
+|---|---|---|---|---|---|
+| batch 1 (run #1's setting) | 296 s | 1.32 | 92 % | 3.0 GB | — |
+| batch 4 / 8 / 16 | 290–292 s | 1.34–1.35 | 97 % | 3.0 GB | identical (−248 dB) |
+| batch 8 / 16 + autocast | 114 s | 3.4 | 92 % | 2.4 GB | −74.6 dB (inaudible) |
+| **batch 16 + native fp16** | **109 s** | **3.57** | 92 % | 2.4 GB | **−74.6 dB (inaudible)** |
+
+The T4 is already >90 % busy at batch 1 (Colab's "GPU RAM 2.5 / 15 GB" panel shows memory,
+not load): batching cannot fill it more. Half precision makes each step cheaper on the T4's
+tensor cores. → **Separation in native fp16 on CUDA** (now the default in
+`load_separator`): 2.7× faster; run #1's 31 min of separation becomes ~11 min. Parallel
+separators on one GPU: not pursued (GPU already busy; owner: keep it simple).
+
+**Audio copy** (vocals SNR, separation from Opus vs original): Opus 160 kb/s 30.0 / 31.3 /
+30.1 dB; 96 kb/s 23.9–25.7 dB. → Kaggle audio copies at **Opus 160 kb/s**.
+
+**Whisper large-v3** (batched, 390 s): batch 8 16.2 s (24×), **16: 14.6 s (27×)**, 32: 14.8 s;
+GPU 88 %, 5.4–7.3 GB, identical words. → keep batch 16; transcription is not a bottleneck.
+
+**OmniVoice** (32 Amharic takes, 16 steps, one reused voice prompt; model load 58 s):
+takes per call 1: 36.3 s (52.9 takes/min, GPU 98 %) · 4: 37.3 s · 8: 38.4 s · 16: 38.4 s.
+→ **one take per call** (batching adds nothing: the GPU is already full). Run #1's 439
+takes ≈ 8 min.
+
+**Summary for a 6-minute video on a T4**: Whisper ~15 s, separation ~100 s (fp16),
+~75 takes ≈ 1.5 min, plus alignment, speakers, scoring and mixing. Separation stays the
+largest GPU stage; the GPU is busy (≥ 88 %) in every stage, so a T4's output is set by the
+models, not by how we feed them.
+
+### Kaggle 2 × T4
+
+_Pending: the account needs phone verification for GPUs._
 
 ## E2 · Video identity
 

@@ -84,7 +84,7 @@ def voice(ctx) -> dict:
         res = ctx.work / "gen_res.json"
         p = sh([sys.executable, TTS / "omnivoice_gen.py", "--model", engine["model"], "--manifest", man,
                 "--out", res, "--steps", str(engine["steps"]), "--language", engine["language"],
-                "--batch", str(engine.get("batch", 8))], ctx, timeout=6 * 3600)
+                "--batch", str(engine.get("batch", 1))], ctx, timeout=6 * 3600)
         if p.returncode:
             raise RuntimeError(f"generation failed (exit {p.returncode}); see log")
     made = [it for it in items if Path(it["out"]).exists()]
