@@ -58,7 +58,13 @@ def fetch(url: str, dest: str | Path, log=print, tries: int = 12) -> Path:
 
     dest = Path(dest)
     part = dest.with_name(dest.name + ".part")
-    head = requests.head(url, allow_redirects=True, timeout=30)
+    try:
+        head = requests.head(url, allow_redirects=True, timeout=30)
+    except requests.RequestException as e:
+        if dest.exists() and dest.stat().st_size > 0:  # offline or slow network: keep the file we have
+            log(f"{dest.name}: could not check its size online ({type(e).__name__}); using the copy on disk")
+            return dest
+        raise
     total = int(head.headers.get("Content-Length") or 0)
     if dest.exists():
         if total and dest.stat().st_size >= total:

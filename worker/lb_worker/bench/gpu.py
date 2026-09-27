@@ -44,7 +44,10 @@ def _free() -> None:
     try:
         import torch
 
-        torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        if hasattr(torch, "xpu") and torch.xpu.is_available():  # Intel Arc: its memory is the PC's RAM
+            torch.xpu.empty_cache()
     except ImportError:
         pass
 
@@ -53,7 +56,6 @@ def prepare(sources: list[str], out: Path, seconds: int = 120, start: int = 60, 
     """Excerpts (``seconds`` from ``start``) of links or files → 44.1 kHz stereo WAVs, plus
     Opus copies at 160 and 96 kb/s decoded back to WAV."""
     from ..deps import ensure
-    from ..stages.bulk import fetch
 
     items = []
     for k, src in enumerate(sources):
@@ -63,8 +65,14 @@ def prepare(sources: list[str], out: Path, seconds: int = 120, start: int = 60, 
         if not wav.exists():
             if src.startswith("http"):
                 ensure("yt-dlp", probe="yt_dlp")
-                video = fetch({"id": f"{k:02d}", "url": src, "clip": [start, start + seconds]}, d, 360, log)
-                ffmpeg("-i", str(video), "-vn", "-ac", "2", "-ar", "44100", str(wav))
+                # audio only: cutting a video section re-encodes it (AV1 on YouTube: minutes on a CPU)
+                p = subprocess.run([sys.executable, "-m", "yt_dlp", "-f", "ba/b", "--no-playlist", "--retries", "10",
+                                    "--download-sections", f"*{start}-{start + seconds}", "-o", str(d / "audio.%(ext)s"),
+                                    "--", src], capture_output=True, text=True)
+                got = sorted(d.glob("audio.*"))
+                if p.returncode or not got:
+                    raise RuntimeError(f"download failed: {(p.stderr or p.stdout)[-400:]}")
+                ffmpeg("-i", str(got[0]), "-vn", "-ac", "2", "-ar", "44100", str(wav))
             else:
                 ffmpeg("-ss", str(start), "-t", str(seconds), "-i", src, "-vn", "-ac", "2", "-ar", "44100", str(wav))
         it = {"name": f"{k:02d}", "source": src, "wav": str(wav), "seconds": round(len(read_audio(wav)) / 44100, 1)}
@@ -131,6 +139,48 @@ def bench_separation(items: list[dict], out: Path, grid=SEP_GRID, log=print) -> 
     result = {"audio_s": audio_s, "rows": rows, "best": best and best["setting"]}
     save(out, "e1_separation", result)
     print(table(rows, ["setting", "s", "x_realtime", "gpu_util", "gpu_mem_gb", "vs_baseline_db", "same_result", "error"]))
+    return result
+
+
+def bench_parallel_separation(items: list[dict], out: Path, workers=(1, 2, 3), batch: int = 8, log=print) -> dict:
+    """Throughput with N separator processes on one GPU, each separating every excerpt:
+    audio separated per second of wall time. Timing starts once all are loaded."""
+    audio_s = sum(it["seconds"] for it in items)
+    rows = []
+    for n in workers:
+        procs = [subprocess.Popen([sys.executable, str(Path(__file__).with_name("sep_worker.py")), "--dest",
+                                   str(out / "sep_parallel" / f"{n}x" / str(w)), "--batch", str(batch),
+                                   *[it["wav"] for it in items]],
+                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+                 for w in range(n)]
+        try:
+            if not all(p.stdout.readline().startswith("ready") for p in procs):
+                raise RuntimeError("a worker did not load (out of memory?)")
+            with GpuSampler() as g:
+                for p in procs:
+                    p.stdin.write("go\n")
+                    p.stdin.flush()
+                done = [p.stdout.readline() for p in procs]
+            if not all(d.startswith("done") for d in done):
+                raise RuntimeError("a worker failed")
+            gpu0 = next(iter(g.stats().values()), {})
+            rows.append({"workers": n, "s": round(g.seconds, 1), "audio_s": audio_s * n,
+                         "x_realtime": round(audio_s * n / g.seconds, 2), "gpu_util": gpu0.get("util_mean"),
+                         "gpu_mem_gb": gpu0.get("mem_max_gb")})
+        except Exception as e:
+            rows.append({"workers": n, "error": f"{type(e).__name__}: {str(e)[:120]}"})
+        finally:
+            for p in procs:
+                p.kill()
+            _free()
+        log(f"separation with {n} worker(s): {rows[-1]}")
+    base = next((r["x_realtime"] for r in rows if "x_realtime" in r), None)
+    for r in rows:
+        if base and "x_realtime" in r:
+            r["speedup"] = round(r["x_realtime"] / base, 2)
+    result = {"batch": batch, "rows": rows}
+    save(out, "e1_parallel_separation", result)
+    print(table(rows, ["workers", "s", "audio_s", "x_realtime", "speedup", "gpu_util", "gpu_mem_gb", "error"]))
     return result
 
 

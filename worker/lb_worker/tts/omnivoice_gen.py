@@ -26,6 +26,7 @@ ap.add_argument("--out", required=True)
 ap.add_argument("--language", default="Amharic")
 ap.add_argument("--steps", type=int, default=32)
 ap.add_argument("--speed", type=float, default=None, help="speaking-rate factor when no duration is set")
+ap.add_argument("--batch", type=int, default=1, help="takes per generate() call (GPU fill; the bench picks it)")
 a = ap.parse_args()
 
 # CUDA (Colab) > Intel XPU (Arc iGPU, if this torch build has it) > CPU. Half
@@ -69,38 +70,77 @@ todo = sum(1 for it in items if not (it.get("skip_existing") and os.path.exists(
 print(f"model loaded in {load_s:.0f} s; {todo} takes to make ({len(items) - todo} already made)", flush=True)
 bar = Progress("voiced", todo)
 
+prompts = {}  # one voice prompt per reference, made once and reused by every take
+
+
+def prompt_for(it):
+    key = (it["ref_audio"], it.get("ref_text") or "")
+    if key not in prompts:
+        make = getattr(model, "create_voice_clone_prompt", None)
+        prompts[key] = make(ref_audio=it["ref_audio"], ref_text=it.get("ref_text")) if make else None
+    return prompts[key]
+
+
+def generate(batch):
+    """Takes for a batch of items in one call (the GPU fills up); lists per item."""
+    kw = {"text": [it["text"] for it in batch]}
+    p = [prompt_for(it) for it in batch]
+    if all(x is not None for x in p):
+        kw["voice_clone_prompt"] = p
+    else:  # an older build without reusable prompts
+        kw["ref_audio"] = [it["ref_audio"] for it in batch]
+        if all(it.get("ref_text") for it in batch):
+            kw["ref_text"] = [it["ref_text"] for it in batch]
+    if any(it.get("duration") for it in batch):
+        kw["duration"] = [float(it["duration"]) if it.get("duration") else None for it in batch]
+    if any(it.get("speed") for it in batch) or a.speed:
+        kw["speed"] = [None if it.get("duration") else float(it.get("speed") or a.speed or 1.0) for it in batch]
+    if OmniVoiceGenerationConfig is not None:
+        kw["generation_config"] = OmniVoiceGenerationConfig(num_step=a.steps, guidance_scale=2.0)
+    if batch[0].get("seed") is not None:  # reproducible takes (per batch)
+        torch.manual_seed(int(batch[0]["seed"]))
+    try:
+        return model.generate(language=[a.language] * len(batch), **kw)
+    except TypeError:  # this build has no language kwarg
+        return model.generate(**kw)
+
+
+def save(it, audio, t):
+    tmp = it["out"] + ".tmp.wav"
+    sf.write(tmp, audio, 24000)
+    os.replace(tmp, it["out"])  # a take appears only when complete
+    results["items"][it["key"]] = {"ok": True, "gen_s": round(t, 2)}
+
+
+todo_items = []
 for it in items:
     if it.get("skip_existing") and os.path.exists(it["out"]):
         results["items"][it["key"]] = {"ok": True, "resumed": True}
-        continue
+    else:
+        todo_items.append(it)
+todo_items.sort(key=lambda it: (it["ref_audio"], it.get("ref_text") or ""))  # same voice together
+for i in range(0, len(todo_items), max(1, a.batch)):
+    batch = todo_items[i:i + max(1, a.batch)]
     t = time.time()
-    if it.get("seed") is not None:  # distinct, reproducible takes
-        torch.manual_seed(int(it["seed"]))
     try:
-        kw = {"text": it["text"], "ref_audio": it["ref_audio"]}
-        if it.get("ref_text"):
-            kw["ref_text"] = it["ref_text"]
-        if it.get("duration"):
-            kw["duration"] = float(it["duration"])
-        elif it.get("speed") or a.speed:
-            kw["speed"] = float(it.get("speed") or a.speed)
-        if OmniVoiceGenerationConfig is not None:
-            kw["generation_config"] = OmniVoiceGenerationConfig(num_step=a.steps, guidance_scale=2.0)
-        try:
-            audio = model.generate(language=a.language, **kw)
-        except TypeError:  # this build has no language kwarg
-            audio = model.generate(**kw)
-        tmp = it["out"] + ".tmp.wav"
-        sf.write(tmp, audio[0], 24000)
-        os.replace(tmp, it["out"])  # a take appears only when complete
-        results["items"][it["key"]] = {"ok": True, "gen_s": round(time.time() - t, 2)}
-    except Exception as e:
-        results["items"][it["key"]] = {"ok": False, "error": f"{type(e).__name__}: {e}",
-                                       "trace": traceback.format_exc()[-800:]}
-    r = results["items"][it["key"]]
-    if not r["ok"]:
-        print(f"take {it['key']} failed: {r['error'][:200]}", flush=True)
-    bar.step(r["ok"])
+        outs = generate(batch)
+        for it, audio in zip(batch, outs):
+            save(it, audio, (time.time() - t) / len(batch))
+    except Exception:  # retry one by one, so one bad line does not fail its neighbours
+        for it in batch:
+            t1 = time.time()
+            try:
+                save(it, generate([it])[0], time.time() - t1)
+            except Exception as e:
+                results["items"][it["key"]] = {"ok": False, "error": f"{type(e).__name__}: {e}",
+                                               "trace": traceback.format_exc()[-800:]}
+        if dev.startswith("cuda"):
+            torch.cuda.empty_cache()
+    for it in batch:
+        r = results["items"][it["key"]]
+        if not r["ok"]:
+            print(f"take {it['key']} failed: {r['error'][:200]}", flush=True)
+        bar.step(r["ok"])
 
 results["device"] = dev
 if dev.startswith("cuda"):

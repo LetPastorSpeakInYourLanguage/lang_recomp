@@ -1,7 +1,10 @@
 """What every bench needs: a GPU sampler, audio comparisons, results on disk."""
 from __future__ import annotations
 
+import csv
 import json
+import os
+import re
 import shutil
 import subprocess
 import threading
@@ -26,6 +29,47 @@ def parse_smi(line: str) -> tuple[int, float, float, float] | None:
     return i, util, used / 1024, total / 1024
 
 
+# Windows (Intel Arc or any GPU): performance counters streamed by typeperf once a second.
+# Its column list is fixed when it starts, so sampling starts after the model is loaded.
+WINDOWS_COUNTERS = [r"\GPU Engine(*)\Utilization Percentage", r"\GPU Adapter Memory(*)\Shared Usage",
+                    r"\GPU Adapter Memory(*)\Dedicated Usage"]
+
+
+def half_ram_gb() -> float:
+    """What Windows lets an integrated GPU share: half the RAM."""
+    import ctypes
+
+    class Status(ctypes.Structure):
+        _fields_ = [("length", ctypes.c_ulong), ("load", ctypes.c_ulong)] + [
+            (n, ctypes.c_ulonglong) for n in ("total", "avail", "pf_total", "pf_avail", "v_total", "v_avail", "ext")]
+
+    m = Status()
+    m.length = ctypes.sizeof(Status)
+    ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m))
+    return m.total / 2 / 2**30
+
+
+def parse_typeperf(header: list[str], row: list[str], total_gb: float) -> tuple[int, float, float, float] | None:
+    """One typeperf CSV row → (0, busiest engine %, used GB, total GB). An engine's
+    columns differ only by process id and are summed; memory is shared + dedicated."""
+    by: dict[str, float] = {}
+    used = 0.0
+    for name, val in zip(header[1:], row[1:]):
+        try:
+            v = float(val)
+        except ValueError:
+            continue
+        low = name.lower()
+        if "gpu engine" in low:
+            key = re.sub(r"pid_\d+_", "", low)
+            by[key] = by.get(key, 0.0) + v
+        elif "gpu adapter memory" in low:
+            used += v
+    if not by and not used:
+        return None
+    return 0, round(min(100.0, max(by.values(), default=0.0)), 1), used / 2**30, total_gb
+
+
 class GpuSampler:
     """Samples every GPU twice a second while a block runs (across processes too):
 
@@ -39,19 +83,31 @@ class GpuSampler:
         self._proc = self._thread = None
 
     def __enter__(self):
+        cmd = None
         if shutil.which("nvidia-smi"):
-            self._proc = subprocess.Popen(
-                ["nvidia-smi", "--query-gpu=index,utilization.gpu,memory.used,memory.total",
-                 "--format=csv,noheader,nounits", f"-lms={self.every_ms}"],
-                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+            cmd = ["nvidia-smi", "--query-gpu=index,utilization.gpu,memory.used,memory.total",
+                   "--format=csv,noheader,nounits", f"-lms={self.every_ms}"]
+        elif os.name == "nt" and shutil.which("typeperf"):
+            cmd = ["typeperf", *WINDOWS_COUNTERS, "-si", "1"]
+            self._total = half_ram_gb()
+        if cmd:
+            self._proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
             self._thread = threading.Thread(target=self._read, daemon=True)
             self._thread.start()
         self.t0 = time.time()
         return self
 
     def _read(self):
+        header = None
         for line in self._proc.stdout:
-            s = parse_smi(line)
+            if line.startswith('"'):  # typeperf CSV: the first row names the columns
+                row = next(csv.reader([line]))
+                if header is None:
+                    header = row
+                    continue
+                s = parse_typeperf(header, row, self._total)
+            else:
+                s = parse_smi(line)
             if s:
                 self.samples.append(s)
 

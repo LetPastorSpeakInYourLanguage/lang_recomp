@@ -132,7 +132,7 @@ def run_folder(videos: str | Path | None, output: str | Path, language: str = "e
                stages: list[str] | None = None, youtube: list[str] | None = None, name: str | None = None,
                dub_limit: int | None = None, limit: int | None = None, takes: int = 1, captions: int = 0,
                align_captions: int = 0, align_subtitles: bool = True, hf_token: str | None = None,
-               cache: str | Path | None = None, aligners: dict | None = None) -> dict:
+               cache: str | Path | None = None, aligners: dict | None = None, options: dict | None = None) -> dict:
     """Run the pipeline over a folder of videos and/or YouTube links; results in ``output``.
 
     videos     a folder (searched recursively); ``name.srt`` beside a video is its transcript
@@ -142,6 +142,7 @@ def run_folder(videos: str | Path | None, output: str | Path, language: str = "e
     limit      take only the first N videos at all
     captions / align_captions   for YouTube videos: also take YouTube's captions for the
                first N, and force-align the first M of those, to compare with Whisper
+    options    any other run option (app/runs.py DEFAULTS), e.g. {"asr_model": "large-v3-turbo"}
     """
     if videos and (Path(videos) / "manifest.json").exists():  # a run folder, given as the videos: continue it
         print(f"{videos} is a run folder: continuing that run")
@@ -196,7 +197,7 @@ def run_folder(videos: str | Path | None, output: str | Path, language: str = "e
     if not pids:
         raise SystemExit("No videos found: check the folder path or the links.")
     opts = {"dub_limit": dub_limit, "takes": takes, "captions_download": captions, "captions_align": align_captions,
-            "align_subtitles": align_subtitles}
+            "align_subtitles": align_subtitles} | (options or {})
     r = runs.create_for(pids, "here", stages or ALL, opts, name=title, submit=False)
     print(f"run {r['run']}: {r['videos']} videos, stages {', '.join(r['stages'])}")
     return run_manifest(r["dir"], hf_token, cache)

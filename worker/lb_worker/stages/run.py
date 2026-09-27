@@ -478,7 +478,7 @@ class Run:
                          "then a progress line every 30 s")
                 sh([sys.executable, TTS / "omnivoice_gen.py", "--model", engine["model"], "--manifest", man,
                     "--out", ctx.work / f"gen_{lang}_res.json", "--steps", str(engine["steps"]),
-                    "--language", L.name(lang)], ctx, timeout=12 * 3600)
+                    "--language", L.name(lang), "--batch", str(engine.get("batch", 8))], ctx, timeout=12 * 3600)
                 self.log(f"voiced {todo} takes in {time.time() - t:.0f} s")
             made = [it for it in items if Path(it["out"]).exists()]
             sman = ctx.work / f"score_{lang}.json"

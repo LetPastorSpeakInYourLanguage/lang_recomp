@@ -37,6 +37,18 @@ def test_nvidia_smi_lines_are_read_and_a_machine_without_a_gpu_reports_nothing()
     assert st["1"]["util_mean"] == 50.0
 
 
+def test_windows_counters_give_the_busiest_engine_and_the_memory_in_use():
+    header = ["(PDH-CSV 4.0)",
+              r"\\pc\GPU Engine(pid_1_luid_0x0_0x1_phys_0_eng_0_engtype_compute)\Utilization Percentage",
+              r"\\pc\GPU Engine(pid_2_luid_0x0_0x1_phys_0_eng_0_engtype_compute)\Utilization Percentage",
+              r"\\pc\GPU Engine(pid_1_luid_0x0_0x1_phys_0_eng_1_engtype_3d)\Utilization Percentage",
+              r"\\pc\GPU Adapter Memory(luid_0x0_0x1_phys_0)\Shared Usage",
+              r"\\pc\GPU Adapter Memory(luid_0x0_0x1_phys_0)\Dedicated Usage"]
+    row = ["09/27/2026 20:00:00.000", "40.5", "30.0", "6.0", str(3 * 2**30), str(2**30)]
+    assert common.parse_typeperf(header, row, 7.7) == (0, 70.5, 4.0, 7.7)  # two processes on one engine
+    assert common.parse_typeperf(header, ["t", " ", " ", " ", " ", " "], 7.7) is None
+
+
 def test_differences_are_measured_in_db():
     x = np.random.default_rng(0).standard_normal((44100, 2)).astype(np.float32)
     assert common.diff_db(x, x) < -100

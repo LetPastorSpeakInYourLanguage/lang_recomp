@@ -13,7 +13,7 @@ import time
 from . import banks, cast, db, langs, project, settings
 from .translate.length import syllables
 
-ENGINE = {"model": "k2-fsa/OmniVoice", "steps": 16, "speed": 1.4, "takes": 2}
+ENGINE = {"model": "k2-fsa/OmniVoice", "steps": 16, "speed": 1.4, "takes": 2, "batch": 8}  # batch: takes per GPU call
 
 
 def _init() -> None:
