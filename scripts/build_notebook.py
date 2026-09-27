@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 
 REPO = "https://github.com/LetPastorSpeakInYourLanguage/lang_recomp"
-BRANCH = "exp/scale"  # the bench notebook runs the experiment branch
+BRANCH = "exp/scale"  # the branch the notebooks download: set back to "main" when exp/scale is merged
 OUT = Path(__file__).resolve().parents[1] / "colab" / "lang_bridge.ipynb"
 
 
@@ -66,7 +66,7 @@ HF_TOKEN = ""  #@param {type:"string"}
 #@title Get Lang-Bridge
 import os, subprocess, sys
 if not os.path.exists('/content/lang_recomp'):
-    subprocess.run(['git', 'clone', '-q', '--depth', '1', '{REPO}', '/content/lang_recomp'], check=True)
+    subprocess.run(['git', 'clone', '-q', '--depth', '1', '-b', '{BRANCH}', '{REPO}', '/content/lang_recomp'], check=True)
 else:
     subprocess.run(['git', '-C', '/content/lang_recomp', 'pull', '-q'], check=False)
 sys.path[:0] = ['/content/lang_recomp', '/content/lang_recomp/worker']
