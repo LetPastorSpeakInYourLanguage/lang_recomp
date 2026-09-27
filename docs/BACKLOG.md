@@ -73,6 +73,7 @@ local disks); then teams working on shared metadata with distributed compute.*
 - [ ] **SCALE 7** Translation bake-off on Colab (llama.cpp): NLLB-3.3B vs TranslateGemma-12B vs Gemma 4, scored by AfriCOMET-QE + people; then the Fit step (timing-aware shortening, manual pick).
 - [ ] **SCALE 8** OmniVoice reference 6–10 s (today ~12–20 s, `banks.TARGET_S`), best-of-N reference by held-out score.
 - [ ] **RUN** Colab: overlap CPU and GPU in every phase (voice→mix per video, decode/VAD of the next group during Whisper).
+- [ ] **RUN** Mixing is CPU-bound: 136–138 s per 6-min video on Colab (2 vCPUs), one rubberband ffmpeg per line (`app/mix.py render`). Stretch lines in one ffmpeg pass or in-process; run mixing while the next video voices.
 - [ ] **RUN** Separation is the biggest fixed cost (~305 s per 6-min video on a T4, run #1): try separator `batch_size`, fp16 autocast, a lighter speech model; never separate a video twice (team-shared stems / cache).
 - [ ] **RUN** OmniVoice in batches (`omnivoice-infer-batch` / batched `generate`) instead of one take per call in `tts/omnivoice_gen.py`; measure takes/min on a T4.
 

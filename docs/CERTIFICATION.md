@@ -66,6 +66,14 @@ takes ≈ 8 min.
 largest GPU stage; the GPU is busy (≥ 88 %) in every stage, so a T4's output is set by the
 models, not by how we feed them.
 
+### Pipeline run with these settings (Colab T4, 2026-09-27)
+
+`colab/lang_bridge.ipynb` on the 6 Minute English playlist, 3 videos, 2 dubbed into Amharic,
+end to end, **23 min** in all. Separation (fp16): a 6-min video in 112 s (run #1: ~305 s).
+Voicing: 206 takes in 549 s (2.3 s per real line), progress every 30 s. Scoring: 175 s
+(2 near-empty takes crashed the Amharic recogniser → now skipped). Mixing + export on the
+CPU: 136–138 s per video (next thing to speed up).
+
 ### Kaggle 2 × T4
 
 _Pending: the account needs phone verification for GPUs._

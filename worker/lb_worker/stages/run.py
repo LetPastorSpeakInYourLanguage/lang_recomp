@@ -122,7 +122,7 @@ class Run:
             os.replace(out, self.dir / "results" / f"{uid}.lbwork")
         self.state["stages"][stage_name] = {"done": time.time()}
         self.save_state()
-        self.log(f"· saved to Drive: results through '{stage_name}'")
+        self.log(f"· results saved (through '{stage_name}')")
 
     # ---- the run -------------------------------------------------------------------------
     def go(self) -> dict:

@@ -70,7 +70,10 @@ if a.asr and a.asr.lower() != "none":
 
 @torch.no_grad()
 def transcribe(path):
-    inp = proc(load16(path).numpy(), sampling_rate=16000, return_tensors="pt").to(dev)
+    x = load16(path)
+    if x.numel() < int(0.3 * 16000):  # a near-empty take: the recogniser fails on it (Colab run 2026-09-27)
+        return ""
+    inp = proc(x.numpy(), sampling_rate=16000, return_tensors="pt").to(dev)
     ids = ctc(**inp).logits.argmax(-1)
     return proc.batch_decode(ids)[0]
 
