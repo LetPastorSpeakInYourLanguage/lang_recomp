@@ -22,7 +22,7 @@ from .common import GpuSampler, diff_db, ffmpeg, read_audio, save, snr_db, table
 
 # (batch_size, autocast, native_fp16); the first is the baseline the others are compared with
 SEP_GRID = [(1, False, False), (4, False, False), (8, False, False), (16, False, False),
-            (8, True, False), (16, True, False), (16, False, True)]
+            (8, True, False), (16, True, False), (16, False, True)]  # (1, False, True) is the default now
 INAUDIBLE_DB = -50.0
 WHISPER_BATCHES = (8, 16, 32)
 OMNI_BATCHES = (1, 4, 8, 16)
@@ -139,48 +139,6 @@ def bench_separation(items: list[dict], out: Path, grid=SEP_GRID, log=print) -> 
     result = {"audio_s": audio_s, "rows": rows, "best": best and best["setting"]}
     save(out, "e1_separation", result)
     print(table(rows, ["setting", "s", "x_realtime", "gpu_util", "gpu_mem_gb", "vs_baseline_db", "same_result", "error"]))
-    return result
-
-
-def bench_parallel_separation(items: list[dict], out: Path, workers=(1, 2, 3), batch: int = 8, log=print) -> dict:
-    """Throughput with N separator processes on one GPU, each separating every excerpt:
-    audio separated per second of wall time. Timing starts once all are loaded."""
-    audio_s = sum(it["seconds"] for it in items)
-    rows = []
-    for n in workers:
-        procs = [subprocess.Popen([sys.executable, str(Path(__file__).with_name("sep_worker.py")), "--dest",
-                                   str(out / "sep_parallel" / f"{n}x" / str(w)), "--batch", str(batch),
-                                   *[it["wav"] for it in items]],
-                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-                 for w in range(n)]
-        try:
-            if not all(p.stdout.readline().startswith("ready") for p in procs):
-                raise RuntimeError("a worker did not load (out of memory?)")
-            with GpuSampler() as g:
-                for p in procs:
-                    p.stdin.write("go\n")
-                    p.stdin.flush()
-                done = [p.stdout.readline() for p in procs]
-            if not all(d.startswith("done") for d in done):
-                raise RuntimeError("a worker failed")
-            gpu0 = next(iter(g.stats().values()), {})
-            rows.append({"workers": n, "s": round(g.seconds, 1), "audio_s": audio_s * n,
-                         "x_realtime": round(audio_s * n / g.seconds, 2), "gpu_util": gpu0.get("util_mean"),
-                         "gpu_mem_gb": gpu0.get("mem_max_gb")})
-        except Exception as e:
-            rows.append({"workers": n, "error": f"{type(e).__name__}: {str(e)[:120]}"})
-        finally:
-            for p in procs:
-                p.kill()
-            _free()
-        log(f"separation with {n} worker(s): {rows[-1]}")
-    base = next((r["x_realtime"] for r in rows if "x_realtime" in r), None)
-    for r in rows:
-        if base and "x_realtime" in r:
-            r["speedup"] = round(r["x_realtime"] / base, 2)
-    result = {"batch": batch, "rows": rows}
-    save(out, "e1_parallel_separation", result)
-    print(table(rows, ["workers", "s", "audio_s", "x_realtime", "speedup", "gpu_util", "gpu_mem_gb", "error"]))
     return result
 
 

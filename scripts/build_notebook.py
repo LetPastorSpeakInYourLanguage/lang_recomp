@@ -157,7 +157,6 @@ out = Path(OUT)
 items = gpu.prepare(SOURCES.split(), out, seconds=SECONDS)
 if RUN_SEPARATION:
     sep = gpu.bench_separation(items, out)
-    par = gpu.bench_parallel_separation(items, out)  # several separators on one GPU: does it fill up?
     copy = gpu.bench_audio_copy(items, out, sep)
 """, form=True),
     cell("code", """
@@ -194,7 +193,7 @@ if RUN_IDENTITY:
 #@title Summary (paste this back)
 import json
 summary = {}
-for name in ('e1_separation', 'e1_parallel_separation', 'e1_audio_copy', 'e1_whisper', 'e1_omnivoice', 'e2_identity'):
+for name in ('e1_separation', 'e1_audio_copy', 'e1_whisper', 'e1_omnivoice', 'e2_identity'):
     f = out / f'{name}.json'
     if f.exists():
         r = json.loads(f.read_text())

@@ -37,10 +37,12 @@ def separate(ctx) -> dict:
 
 
 def load_separator(model_name: str | None = None, overlap: int = 2, log=print, batch_size: int = 1,
-                   autocast: bool = False, native_fp16: bool = False):
-    """A loaded separator. ``batch_size`` windows go through the model at once; with
-    ``autocast`` / ``native_fp16`` it runs in half precision (fast on T4 tensor cores).
-    The bench (lb_worker.bench.gpu) measures which settings are safe and fastest."""
+                   autocast: bool = False, native_fp16: bool | None = None):
+    """A loaded separator. ``native_fp16`` (default: on for CUDA) runs it in half precision.
+    Measured on a Colab T4 (docs/CERTIFICATION.md, E1): 3.57× real time instead of 1.32×,
+    stems within −74.6 dB of full precision (inaudible); batch size changes nothing there."""
+    if native_fp16 is None:
+        native_fp16 = device() == "cuda"
     ensure("audio-separator[gpu]" if device() == "cuda" else "audio-separator[cpu]", probe="audio_separator")
     ensure("audioread", probe="audioread")
     import inspect
