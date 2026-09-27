@@ -59,7 +59,8 @@ local disks); then teams working on shared metadata with distributed compute.*
 
 - [x] **SCALE** Owner decisions (2026-09-27): content and code may be public; one Supabase for ~10 teams; local folders as well as links; notebooks decoupled from the app; work on branch `exp/scale`.
 - [x] **SCALE** Plan approved 2026-09-27: [SCALE_PLAN.md](SCALE_PLAN.md) (certify E1–E6, then build M1–M8, acceptance, merge).
-- [ ] **SCALE E1+E2** Bench notebook `colab/bench_gpu_identity.ipynb` (code `worker/lb_worker/bench/`) built and tested on synthetic data — **owner runs it on Colab and on Kaggle (T4 x2), pastes the summary**; needs the `exp/scale` branch pushed.
+- [x] **SCALE E1+E2** Run on a Colab T4 2026-09-27 (docs/CERTIFICATION.md): separation fp16 2.7× faster (now default), batching gives nothing (GPU ≥ 88 % busy in every stage), Whisper 27× real time, OmniVoice 53 takes/min; identity: link id / quick hash / fingerprint (8-bit threshold, offsets exact).
+- [ ] **SCALE E1 Kaggle** Same notebook on Kaggle 2 × T4 (account needs phone verification for GPU).
 - [ ] **SCALE E3** Translation bench notebook (Google, rephrase, TranslateGemma, NLLB, Gemma 4; rating page for 2–3 Amharic speakers).
 - [ ] **SCALE E4–E6** OmniVoice reference length; Supabase + HF bucket round trip; Drive two-writer test. Then `docs/CERTIFICATION.md` and owner approval of Phase B.
 - [ ] **SCALE 1** Media identity: link identity + quick hash + Chromaprint fingerprint with time offset; `media_copies`; "open with my copy" (supersedes the full-SHA-256 idea).

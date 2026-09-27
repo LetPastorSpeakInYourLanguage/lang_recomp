@@ -70,9 +70,28 @@ models, not by how we feed them.
 
 _Pending: the account needs phone verification for GPUs._
 
-## E2 · Video identity
+## E2 · Video identity (Colab, 2026-09-27)
 
-_Pending (Colab/Kaggle notebook; local run after E1)._
+Two 6 Minute English videos, each as: an exact copy, a second download at 360p, a 240p
+re-encode, an MP3, a copy with the first 10 s cut, and one with 7 s of another episode in
+front; matched against 5 other episodes. Chromaprint by Colab's own ffmpeg.
+
+| Variant | Quick hash equal | Offset found (expected) | Mean differing bits (of 32) |
+|---|---|---|---|
+| exact copy | yes | 0 (0) | 0.0 |
+| re-download 360p | no | 0 (0) | 0.0 |
+| re-encode 240p | no | 0 (0) | 0.52–0.55 |
+| MP3 | no | 0 (0) | 0.07–0.08 |
+| first 10 s cut | no | +10.03 (+10) | 1.70–1.78 |
+| 7 s intro added | no | −7.06 (−7) | 2.49–2.55 |
+| any other episode (best) | — | — | ≥ 13.59 |
+
+All five usual forms of a YouTube link gave the same `Youtube:<id>`.
+
+→ Identity = link id, else quick hash (copies only), else fingerprint of a 60 s window with
+**threshold 8 bits** (positives ≤ 2.6, negatives ≥ 13.6: a wide gap), offset applied to all
+line times. A re-download never has the same bytes, so the fingerprint is the key for
+link sources re-fetched by different members.
 
 ## E3–E6
 

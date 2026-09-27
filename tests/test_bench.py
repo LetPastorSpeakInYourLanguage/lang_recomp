@@ -127,7 +127,7 @@ def test_the_separation_bench_picks_the_fastest_setting_that_changes_nothing(tmp
         return Sep(batch_size, autocast, native_fp16)
 
     def separate(sep, src, tmp, dest, log):
-        time.sleep(0.2 / sep.b)
+        time.sleep(1.0 / sep.b)  # far apart, so timer noise cannot reorder them
         y = x + (0.05 * np.random.default_rng(sep.b).standard_normal(len(x)) if sep.half else 0)  # half precision: audible
         dest.mkdir(parents=True, exist_ok=True)
         _wav(dest / "vocals.flac", y, 44100)  # WAV bytes: ffmpeg reads by content
