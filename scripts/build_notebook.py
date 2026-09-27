@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 
 REPO = "https://github.com/LetPastorSpeakInYourLanguage/lang_recomp"
-BRANCH = "exp/scale"  # the branch the notebooks download: set back to "main" when exp/scale is merged
+BRANCH = "main"  # the branch the notebooks download
 OUT = Path(__file__).resolve().parents[1] / "colab" / "lang_bridge.ipynb"
 
 
