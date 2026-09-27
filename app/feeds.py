@@ -8,7 +8,9 @@ listings carry no upload date; order follows the channel (newest first).
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
+import sys
 
 
 def parse(js: dict) -> dict:
@@ -39,7 +41,9 @@ def parse(js: dict) -> dict:
 
 def listing(url: str, limit: int = 100) -> dict:
     """The newest ``limit`` videos per tab of a channel or playlist."""
-    p = subprocess.run(["yt-dlp", "--js-runtimes", "node", "--flat-playlist", "-J", "--playlist-end", str(limit),
+    # as a module of this Python (a notebook has no yt-dlp command); node for YouTube where present
+    js = ["--js-runtimes", "node"] if shutil.which("node") else []
+    p = subprocess.run([sys.executable, "-m", "yt_dlp", *js, "--flat-playlist", "-J", "--playlist-end", str(limit),
                         "--", url], capture_output=True, text=True, encoding="utf-8", timeout=180)
     if p.returncode:
         raise RuntimeError(f"yt-dlp could not list {url}: {p.stderr.strip()[-300:]}")

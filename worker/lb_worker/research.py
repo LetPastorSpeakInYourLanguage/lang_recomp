@@ -179,6 +179,9 @@ def run_folder(videos: str | Path | None, output: str | Path, language: str = "e
             pids += runs.folder_sources(s["id"], str(folder), "here")
             print(f"{len(pids)} videos found in {folder}")
     if youtube:
+        from .deps import ensure
+
+        ensure("yt-dlp", probe="yt_dlp")  # listing playlists happens before any stage installs it
         s = series.create(title, "channel", language, targets)
         for link in youtube:
             link = link.strip()
