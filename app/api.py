@@ -61,6 +61,7 @@ class RootIn(BaseModel):
     name: str
     kind: str
     path: str
+    bucket: str | None = None           # kind "bucket": namespace/name on Hugging Face
 
 
 class SettingsIn(BaseModel):
@@ -1233,9 +1234,15 @@ def list_runs(owner: str):
     return runs.listing(owner)
 
 
+def _known_root(rid: str) -> None:
+    if rid not in {r["id"] for r in settings.load()["roots"]}:  # settings.root() would fall back to another device
+        raise HTTPException(404, f"no device '{rid}'")
+
+
 @app.get("/api/roots/{rid}/runs")
 def root_runs(rid: str):
     """Every run in a device's folder (a notebook's too), with progress; new results open by themselves."""
+    _known_root(rid)
     try:
         return {"runs": runs.scan(rid), "last_sync": buckets.last_sync(rid),
                 "syncing": tasks.busy(f"root:{rid}", "sync bucket")}
@@ -1246,6 +1253,7 @@ def root_runs(rid: str):
 @app.post("/api/roots/{rid}/sync")
 def root_sync(rid: str):
     """Pull a Hugging Face bucket device into its folder (in the background)."""
+    _known_root(rid)
     if settings.root(rid).get("kind") != "bucket":
         raise HTTPException(400, "not a Hugging Face bucket")
     return {"task": tasks.start(f"root:{rid}", "sync bucket", buckets.sync, rid, serial=f"sync-{rid}")}
