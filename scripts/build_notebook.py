@@ -61,7 +61,7 @@ LIMIT = 0  #@param {type:"integer"}
 OUTPUT = ""  #@param {type:"string"}
 #@markdown Where results go. Empty: this machine's disk (`/kaggle/working/lb-out` or `/content/lb-out`); or a Drive folder.
 BUCKET = ""  #@param {type:"string"}
-#@markdown A Hugging Face bucket (`namespace/name`) to push results to after every stage; the app pulls it from there.
+#@markdown A Hugging Face bucket (`namespace/name`) to push results to after every stage; the app pulls it from there. Empty: the `LB_BUCKET` secret, if set.
 CAPTIONS = 0  #@param {type:"integer"}
 ALIGN_CAPTIONS = 0  #@param {type:"integer"}
 #@markdown YouTube only: also take YouTube's captions for the first N videos, force-align the first M, and compare with Whisper.
@@ -86,17 +86,18 @@ print(subprocess.run(['git', '-C', CODE, 'log', '-1', '--format=Lang-Bridge %h (
 """, form=True),
     cell("code", """
 #@title Run
-from lb_worker.research import run_folder, run_manifest
+from lb_worker.research import run_folder, run_manifest, secret
 
 pairs = lambda text: dict(p.split('=', 1) for p in text.split() if '=' in p)
 out = OUTPUT.strip() or HOME + '/lb-out'
+bucket = BUCKET.strip() or secret('LB_BUCKET')  # or set it once as a secret named LB_BUCKET
 if RUN_FOLDER.strip():
-    result = run_manifest(RUN_FOLDER.strip(), hf_token=HF_TOKEN or None, bucket=BUCKET.strip() or None)
+    result = run_manifest(RUN_FOLDER.strip(), hf_token=HF_TOKEN or None, bucket=bucket)
 else:
     result = run_folder(VIDEOS.strip() or None, out, LANGUAGE.strip(), TARGETS.split(), STAGES.split(),
                         youtube=YOUTUBE.split() or None, dub_limit=DUB_LIMIT or None, limit=LIMIT or None,
                         captions=CAPTIONS, align_captions=ALIGN_CAPTIONS, hf_token=HF_TOKEN or None,
-                        asr_models=pairs(ASR_MODELS), aligners=pairs(ALIGNERS), bucket=BUCKET.strip() or None)
+                        asr_models=pairs(ASR_MODELS), aligners=pairs(ALIGNERS), bucket=bucket)
 """, form=True),
     cell("markdown", """
 ## Look at the results
@@ -220,6 +221,36 @@ print(json.dumps(summary, ensure_ascii=False))
 ]
 
 
+E2E_OUT = Path(__file__).resolve().parents[1] / "colab" / "e2e_test.ipynb"
+E2E = [
+    cell("markdown", """
+# Lang-Bridge end-to-end test: two videos → Hugging Face bucket → the app
+
+Two 6 Minute English episodes (Neil and a co-host), English → Amharic, every stage, results
+pushed to your bucket after each stage. Needs two secrets (Kaggle: Add-ons → Secrets; Colab:
+the key icon): `HF_TOKEN` (can write to the bucket) and `LB_BUCKET` (e.g. `you/lang-bridge-runs`).
+Kaggle: Accelerator **GPU T4 ×2**, Internet **on**. Then **Run all**, and follow it in the app
+(Home → Runs on …).
+"""),
+    cell("code", f"""
+import os, subprocess, sys
+HOME = '/kaggle/working' if os.environ.get('KAGGLE_KERNEL_RUN_TYPE') else '/content'
+CODE = HOME + '/lang_recomp'
+if not os.path.exists(CODE):
+    subprocess.run(['git', 'clone', '-q', '--depth', '1', '-b', '{BRANCH}', '{REPO}', CODE], check=True)
+else:
+    subprocess.run(['git', '-C', CODE, 'pull', '-q'], check=False)
+sys.path[:0] = [CODE, CODE + '/worker']
+print(subprocess.run(['git', '-C', CODE, 'log', '-1', '--format=Lang-Bridge %h (%cd)'], capture_output=True, text=True).stdout)
+from lb_worker.research import run_folder, secret
+bucket = secret('LB_BUCKET')
+assert secret('HF_TOKEN') and bucket, 'add the HF_TOKEN and LB_BUCKET secrets first'
+result = run_folder(None, HOME + '/lb-out', 'en', ['am'], name='E2E test',
+                    youtube={json.dumps(SIX_MINUTE[:2])}, bucket=bucket)
+"""),
+]
+
+
 def write(path: Path, cells: list[dict]) -> None:
     path.parent.mkdir(exist_ok=True)
     nb = {"nbformat": 4, "nbformat_minor": 0, "cells": cells,
@@ -232,6 +263,7 @@ def write(path: Path, cells: list[dict]) -> None:
 def main() -> None:
     write(OUT, CELLS)
     write(BENCH_OUT, BENCH)
+    write(E2E_OUT, E2E)
 
 
 if __name__ == "__main__":
