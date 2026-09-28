@@ -63,7 +63,9 @@ local disks); then teams working on shared metadata with distributed compute.*
 - [x] **SCALE merge** 2026-09-27 (owner): exp/scale fast-forwarded into main; old main kept as `main-before-scale`; notebooks download `main`.
 - [x] **RES** Notebook for Colab and Kaggle: ASR per source language (Whisper, or a named HF model; Amharic built in), default aligners for ~27 languages, HF_TOKEN from secrets, results pushed to a Hugging Face bucket after every stage; app: bucket devices, Sync, Runs on devices, results opened by themselves (2026-09-28).
 - [ ] **RES** End-to-end on Kaggle → bucket → app with two 6 Minute English videos; then a Turkish and an Amharic source.
+  - 2026-09-28 run 1: bucket push and app sync worked; failed at speaker detection (pyannote telemetry vs Kaggle's opentelemetry) → fixed (baae72d); only one T4 used → separation on GPU 1 during transcription, voicing/scoring split across GPUs.
 - [ ] **SCALE E1 Kaggle** Same notebook on Kaggle 2 × T4 (account needs phone verification for GPU).
+- [ ] **SCALE M4a** Chapters made by the LLM after transcription (topic boundaries at lines, title, summary, key terms → translation context + glossary; people adjust; fallback: pauses + LaBSE topic shift). docs/SCALE_DESIGN.md §5.
 - [ ] **SCALE E3** Translation bench notebook (Google, rephrase, TranslateGemma, NLLB, Gemma 4; rating page for 2–3 Amharic speakers).
 - [ ] **SCALE E4–E6** OmniVoice reference length; Supabase + HF bucket round trip; Drive two-writer test. Then `docs/CERTIFICATION.md` and owner approval of Phase B.
 - [ ] **SCALE 1** Media identity: link identity + quick hash + Chromaprint fingerprint with time offset; `media_copies`; "open with my copy" (supersedes the full-SHA-256 idea).

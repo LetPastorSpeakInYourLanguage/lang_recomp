@@ -173,6 +173,17 @@ Per **chapter** (so the model sees the context), per target language:
               the best one is used for a first dub, people choose in the app
 ```
 
+**Chapters made by the model (step 0, owner's idea 2026-09-28).** Chapters are already the
+unit of translation context in the app (`app/chapters.py`), but today a video starts as one
+chapter unless a person splits it. After transcription the instruction model reads the
+transcript and proposes chapters at line boundaries where the topic changes, each with a
+title, a two-line summary and its key terms (names, scripture references, technical words).
+They are written as *auto* chapters; people adjust them in the app (manual wins). The
+summary and key terms go into every translation prompt of that chapter and seed the
+glossary, and chapter size is kept to what the translator handles well (a few minutes).
+Without an LLM, a fallback splits at long pauses and topic shifts in sentence embeddings
+(LaBSE), so every run gets chapters.
+
 All steps are logged per line (`tr.<lang>.json`: rounds, candidates, checks), so people
 see *why* an option is recommended and a better model later can re-run only step 3–6.
 
