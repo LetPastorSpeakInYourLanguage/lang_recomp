@@ -50,7 +50,7 @@ export default function Settings({ state, onSaved }: { state: AppState | null; o
             title={
               <label className="flex items-center gap-8 normal-case tracking-normal cursor-pointer">
                 <input type="radio" name="active" checked={active === r.id} onChange={() => setActive(r.id)} />
-                {r.kind === "colab" ? <Cloud size={13} className="text-accent" /> : <Monitor size={13} className="text-accent" />}
+                {r.kind === "local" ? <Monitor size={13} className="text-accent" /> : <Cloud size={13} className="text-accent" />}
                 <span className="text-12.5 font-semibold text-text">{r.name}</span>
                 {active === r.id && <Tag tone="accent">active</Tag>}
               </label>
@@ -71,15 +71,26 @@ export default function Settings({ state, onSaved }: { state: AppState | null; o
             <div className="p-12 grid grid-cols-[1fr_2fr_auto] gap-10 items-end max-md:grid-cols-1">
               <label className="grid gap-4"><span className="label">Name</span>
                 <input className="field" value={r.name} onChange={(e) => edit(i, { name: e.target.value })} /></label>
-              <label className="grid gap-4"><span className="label">Folder path</span>
+              <label className="grid gap-4"><span className="label">{r.kind === "bucket" ? "Synced to (a folder on this PC)" : "Folder path"}</span>
                 <input className="field font-mono" value={r.path} onChange={(e) => edit(i, { path: e.target.value })} /></label>
               <div className="grid gap-4"><span className="label">Processed by</span>
                 <Segmented<Root["kind"]> value={r.kind} onChange={(k) => edit(i, { kind: k })}
-                  options={[{ value: "colab", label: "Colab" }, { value: "local", label: "This PC" }]} /></div>
+                  options={[{ value: "colab", label: "Colab" }, { value: "local", label: "This PC" }, { value: "bucket", label: "HF bucket" }]} /></div>
             </div>
+            {r.kind === "bucket" && (
+              <div className="px-12 pb-8">
+                <label className="grid gap-4"><span className="label">Hugging Face bucket (namespace/name)</span>
+                  <input className="field font-mono" value={r.bucket ?? ""} placeholder="your-org/lang-bridge-runs"
+                    onChange={(e) => edit(i, { bucket: e.target.value })} /></label>
+              </div>
+            )}
             <div className="px-12 pb-10 text-10.5 text-dim flex items-start gap-6">
               <Cpu size={11} className="mt-2 flex-none" />
-              {r.kind === "colab" ? (
+              {r.kind === "bucket" ? (
+                <span>A notebook (Kaggle, Colab or a server) pushes its results to this bucket after every stage (setting
+                  <span className="font-mono"> BUCKET</span> in <span className="font-mono">colab/lang_bridge.ipynb</span>). Home → Runs on devices:
+                  Sync pulls it here with this PC's Hugging Face login; new results open by themselves.</span>
+              ) : r.kind === "colab" ? (
                 <span>Must be inside your Google Drive. Runs for this folder are only prepared here: run them yourself with
                   <span className="font-mono">colab/lang_bridge.ipynb</span> (setting <span className="font-mono">RUN_FOLDER</span>) on a GPU. See colab/README.md.</span>
               ) : (

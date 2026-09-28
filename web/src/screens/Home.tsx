@@ -1,7 +1,8 @@
-import { HardDrive, Library, PackageOpen, Plus } from "lucide-react";
+import { Cloud, HardDrive, Library, PackageOpen, Plus, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
-import { api, fmtTime, type AppState, type ImportReport, type LibraryInfo, type PackageInfo, type Project, type Series, type SeriesKind } from "../api";
+import { api, fmtTime, usePoll, type AppState, type ImportReport, type LibraryInfo, type PackageInfo, type Project, type Series, type SeriesKind } from "../api";
 import { go, goLibrary, goSeries } from "../router";
+import { RunRow } from "../shell/RunPanel";
 import VideoForm, { LangOptions } from "../shell/VideoForm";
 import { Button, Panel, Tag, stateTone } from "../ui";
 
@@ -63,6 +64,10 @@ export default function Home({ projects, series, libraries, state, reload }: {
       </Panel>
 
       <Libraries libraries={libraries} state={state} onDone={reload} />
+
+      {(state?.roots ?? []).filter((r) => r.kind !== "local").map((r) => (
+        <DeviceRuns key={r.id} root={r.id} name={r.name} bucket={r.kind === "bucket" ? r.bucket ?? "" : null} state={state} onOpened={reload} />
+      ))}
 
       <OpenShared onDone={reload} />
 
@@ -278,5 +283,43 @@ function NewSeries({ onDone }: { onDone: (s: Series | null) => void }) {
         <Button type="submit" variant="primary" disabled={!name.trim()}>Create series</Button>
       </div>
     </form>
+  );
+}
+
+/** Every run in a device's folder — a notebook's on Kaggle/Colab too — with its progress.
+ * A Hugging Face bucket is pulled here first (Sync; every minute while a run is going). */
+function DeviceRuns({ root, name, bucket, state, onOpened }: {
+  root: string; name: string; bucket: string | null; state: AppState | null; onOpened: () => void;
+}) {
+  const runs = usePoll(() => api.rootRuns(root), [root], 15000);
+  const [msg, setMsg] = useState<string | null>(null);
+  const going = (runs.data?.runs ?? []).some((r) => !r.finished && r.state !== "done");
+  const sync = async () => {
+    try { await api.syncRoot(root); setMsg("Pulling the bucket…"); } catch (e) { setMsg((e as Error).message); }
+  };
+  useEffect(() => {  // follow a run in progress: pull the bucket every minute
+    if (bucket === null || !going) return;
+    const t = setInterval(() => { void api.syncRoot(root); }, 60000);
+    return () => clearInterval(t);
+  }, [bucket, going, root]);
+  const list = runs.data?.runs ?? [];
+  if (bucket === null && !list.length) return null;
+  return (
+    <Panel title={<span className="flex items-center gap-6"><Cloud size={12} />Runs on {name}{bucket ? <span className="font-mono text-faint normal-case"> · {bucket}</span> : null}</span>}
+      actions={bucket !== null && (
+        <div className="flex items-center gap-8">
+          <span className="text-10.5 text-dim">{runs.data?.syncing ? "pulling…" : runs.data?.last_sync ? `pulled ${new Date(runs.data.last_sync * 1000).toLocaleTimeString()}` : "not pulled yet"}</span>
+          <Button onClick={sync} disabled={!!runs.data?.syncing}><RefreshCw size={11} />Sync</Button>
+        </div>
+      )}>
+      {list.length === 0 ? (
+        <div className="p-12 text-11 text-dim">{bucket !== null ? "No runs yet: press Sync after a notebook has pushed to the bucket." : "No runs."}</div>
+      ) : (
+        <div className="divide-y divide-line">
+          {list.map((r) => <RunRow key={r.run} r={r} state={state} onOpened={() => { void runs.reload(); onOpened(); }} />)}
+        </div>
+      )}
+      {msg && <div className="px-12 pb-8 text-10.5 text-dim">{msg}</div>}
+    </Panel>
   );
 }

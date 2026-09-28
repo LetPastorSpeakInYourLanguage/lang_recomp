@@ -15,6 +15,10 @@ from pathlib import Path
 from .db import DATA
 
 PATH = DATA / "settings.json"
+# colab: a Drive folder a notebook works in · local: this PC's worker · bucket: a Hugging Face
+# bucket a notebook (Kaggle, Colab, a server) pushes to; "path" is where it is synced on this PC
+KINDS = ("colab", "local", "bucket")
+
 DEFAULTS = {
     "roots": [
         {"id": "colab", "name": "Colab GPU (Google Drive)", "kind": "colab", "path": "G:/My Drive/LangBridge"},
@@ -51,14 +55,15 @@ def save(s: dict) -> dict:
     for r in s.get("roots", []):
         name = str(r.get("name", "")).strip() or "Job folder"
         path = str(r.get("path", "")).strip()
-        kind = r.get("kind") if r.get("kind") in ("colab", "local") else "local"
-        if not path:
+        kind = r.get("kind") if r.get("kind") in KINDS else "local"
+        bucket = str(r.get("bucket", "")).strip().removeprefix("hf://buckets/").strip("/")
+        if not path or (kind == "bucket" and bucket.count("/") < 1):
             continue
         rid = str(r.get("id") or re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "folder")
         while rid in seen:
             rid += "-2"
         seen.add(rid)
-        roots.append({"id": rid, "name": name, "kind": kind, "path": path})
+        roots.append({"id": rid, "name": name, "kind": kind, "path": path} | ({"bucket": bucket} if kind == "bucket" else {}))
     if not roots:
         raise ValueError("at least one job folder is required")
     active = s.get("active") if s.get("active") in seen else roots[0]["id"]

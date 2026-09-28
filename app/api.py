@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import aligners, banks, bulk, cast, chapters, db, feeds, langs, libraries, library, mix, package, project, recurring, runs, series, settings, tasks, voice
+from . import aligners, banks, buckets, bulk, cast, chapters, db, feeds, langs, libraries, library, mix, package, project, recurring, runs, series, settings, tasks, voice
 
 app = FastAPI(title="Lang-Bridge")
 WEB = Path(__file__).resolve().parents[1] / "web" / "dist"
@@ -1231,6 +1231,24 @@ def new_run(body: RunReq):
 @app.get("/api/runs")
 def list_runs(owner: str):
     return runs.listing(owner)
+
+
+@app.get("/api/roots/{rid}/runs")
+def root_runs(rid: str):
+    """Every run in a device's folder (a notebook's too), with progress; new results open by themselves."""
+    try:
+        return {"runs": runs.scan(rid), "last_sync": buckets.last_sync(rid),
+                "syncing": tasks.busy(f"root:{rid}", "sync bucket")}
+    except (KeyError, OSError) as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/roots/{rid}/sync")
+def root_sync(rid: str):
+    """Pull a Hugging Face bucket device into its folder (in the background)."""
+    if settings.root(rid).get("kind") != "bucket":
+        raise HTTPException(400, "not a Hugging Face bucket")
+    return {"task": tasks.start(f"root:{rid}", "sync bucket", buckets.sync, rid, serial=f"sync-{rid}")}
 
 
 @app.post("/api/runs/{root}/{run_id}/open")

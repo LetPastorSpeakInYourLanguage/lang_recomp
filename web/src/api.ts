@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 export interface Worker { worker_id: string; online: boolean; age_s: number; current_job: string | null; stages: string[]; device?: string }
 export interface Task { id: string; project_id: string; kind: string; state: string; note: string; progress: number; error: string | null; started: number; finished: number | null }
-export interface Root { id: string; name: string; kind: "colab" | "local"; path: string }
+export interface Root { id: string; name: string; kind: "colab" | "local" | "bucket"; path: string; bucket?: string }
 export interface RootState extends Root { active: boolean; reachable: boolean; online: boolean; workers: Worker[] }
 export interface AppState { roots: RootState[]; active: string; drive: boolean; root: string | null; workers: Worker[]; tasks: Task[] }
 export interface Settings { roots: Root[]; active: string; aligners: Record<string, string>; keep_words: string[] }
@@ -224,6 +224,8 @@ export const api = {
   createRun: (b: { videos: string[]; root: string; stages?: Stage[]; options?: Record<string, unknown>; name?: string; owner?: string }) =>
     req<{ run: string; job?: string | null; dir?: string | null; root: string; videos: number; works: number; stages: Stage[] }>("POST", "/api/runs", b),
   runs: (owner: string) => req<RunInfo[]>("GET", `/api/runs?owner=${encodeURIComponent(owner)}`),
+  rootRuns: (root: string) => req<{ runs: RunInfo[]; last_sync: number | null; syncing: boolean }>("GET", `/api/roots/${encodeURIComponent(root)}/runs`),
+  syncRoot: (root: string) => req<{ task: string }>("POST", `/api/roots/${encodeURIComponent(root)}/sync`),
   openRun: (root: string, run: string) => req<{ works: string[]; sources: { added: string[]; matched: string[] }; lines: number; notes: string[] }>(
     "POST", `/api/runs/${root}/${run}/open`),
   deleteSeries: (s: string) => req<{ released: number }>("DELETE", `/api/series/${s}`),

@@ -32,6 +32,7 @@ import os
 import shutil
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -96,6 +97,74 @@ def _scratch() -> Path:
     return d
 
 
+def secret(name: str) -> str | None:
+    """A secret from the environment, Kaggle's Secrets (Add-ons → Secrets) or Colab's
+    Secrets (the key icon), so a token never has to be typed into a notebook cell."""
+    if os.environ.get(name):
+        return os.environ[name]
+    try:
+        from kaggle_secrets import UserSecretsClient  # Kaggle
+
+        return UserSecretsClient().get_secret(name) or None
+    except Exception:
+        pass
+    try:
+        from google.colab import userdata  # Colab
+
+        return userdata.get(name) or None
+    except Exception:
+        return None
+
+
+class Bucket:
+    """The output folder mirrored in a Hugging Face Storage Bucket (``namespace/name`` or
+    ``namespace/name/prefix``): pulled when a run continues, pushed after every stage (in the
+    background, so the GPU never waits) and at the end. The Lang-Bridge app pulls the same
+    bucket to follow the run and open its results; Kaggle needs no Google Drive."""
+
+    EXCLUDE = ["cache/*", "*.part", "*.tmp.wav", "*/tmp/*"]
+
+    def __init__(self, name: str, root: Path, token: str | None = None, log=print):
+        self.url = "hf://buckets/" + name.strip().strip("/").removeprefix("hf://buckets/")
+        self.root, self.token, self.log = root, token, log
+        self._lock, self._pending, self._thread = threading.Lock(), False, None
+
+    def pull(self, include: list[str] | None = None) -> None:
+        from huggingface_hub import sync_bucket
+
+        self.root.mkdir(parents=True, exist_ok=True)
+        sync_bucket(self.url, str(self.root), include=include, exclude=self.EXCLUDE, quiet=True, token=self.token)
+
+    def push(self) -> None:
+        from huggingface_hub import sync_bucket
+
+        with self._lock:
+            t = time.time()
+            sync_bucket(str(self.root), self.url, exclude=self.EXCLUDE, quiet=True, token=self.token)
+            self.log(f"· pushed to {self.url} ({time.time() - t:.0f} s)")
+
+    def push_soon(self, *_) -> None:
+        """Push in the background; pushes asked for meanwhile collapse into one."""
+        self._pending = True
+        if self._thread and self._thread.is_alive():
+            return
+
+        def loop():
+            while self._pending:
+                self._pending = False
+                try:
+                    self.push()
+                except Exception as e:  # the run goes on; the next push catches up
+                    self.log(f"· push to {self.url} failed: {type(e).__name__}: {str(e)[:200]}")
+
+        self._thread = threading.Thread(target=loop, daemon=True)
+        self._thread.start()
+
+    def wait(self) -> None:
+        if self._thread:
+            self._thread.join()
+
+
 def _env(hf_token: str | None, cache: Path | None) -> None:
     if hf_token:
         os.environ["HF_TOKEN"] = hf_token
@@ -105,21 +174,39 @@ def _env(hf_token: str | None, cache: Path | None) -> None:
             Path(os.environ[k]).mkdir(parents=True, exist_ok=True)
 
 
-def run_manifest(run_dir: str | Path, hf_token: str | None = None, cache: str | Path | None = None) -> dict:
+def run_manifest(run_dir: str | Path, hf_token: str | None = None, cache: str | Path | None = None,
+                 bucket: str | None = None) -> dict:
     """Run a run folder (``<root>/runs/<run id>``) written by the app or by ``run_folder``.
-    Media the run refers to are found relative to ``<root>``."""
+    Media the run refers to are found relative to ``<root>``. With ``bucket``, the run is
+    first pulled from it (continuing on another machine) and pushed to it as it goes."""
     from .stages.run import Run
 
     run_dir = Path(run_dir)
     root = run_dir.parent.parent
+    hf_token = hf_token or secret("HF_TOKEN")
     _env(hf_token, Path(cache) if cache else root / "cache")
     t = time.time()
     ctx = _current["ctx"] = _Ctx(root, run_dir.name, _scratch())
+    store = Bucket(bucket, root, hf_token, ctx.log) if bucket else None
+    if store:
+        store.pull(include=[f"runs/{run_dir.name}/*"])
+        man = run_dir / "manifest.json"
+        if man.exists():  # the media this run already made, wherever it made them
+            works = json.loads(man.read_text(encoding="utf-8")).get("works") or []
+            if works:
+                store.pull(include=[f"library/{w['uid']}/*" for w in works if w.get("uid")])
+        ctx.on_publish = store.push_soon
     try:
         res = Run(ctx).go()
     except BaseException:  # stopped (KeyboardInterrupt) or failed: stop its threads too
         ctx.stop()
+        if store:
+            store.wait()
+            store.push()  # keep what was made
         raise
+    if store:
+        store.wait()
+        store.push()
     results = sorted((run_dir / "results").glob("*.lbwork"))
     print(f"\nDone in {(time.time() - t) / 60:.0f} min: {res['videos']} videos. To look at and listen to the results, "
           f"open this in the Lang-Bridge app (Home → Open a shared work):")
@@ -132,7 +219,8 @@ def run_folder(videos: str | Path | None, output: str | Path, language: str = "e
                stages: list[str] | None = None, youtube: list[str] | None = None, name: str | None = None,
                dub_limit: int | None = None, limit: int | None = None, takes: int = 1, captions: int = 0,
                align_captions: int = 0, align_subtitles: bool = True, hf_token: str | None = None,
-               cache: str | Path | None = None, aligners: dict | None = None, options: dict | None = None) -> dict:
+               cache: str | Path | None = None, aligners: dict | None = None, options: dict | None = None,
+               asr_models: dict | None = None, bucket: str | None = None) -> dict:
     """Run the pipeline over a folder of videos and/or YouTube links; results in ``output``.
 
     videos     a folder (searched recursively); ``name.srt`` beside a video is its transcript
@@ -142,12 +230,19 @@ def run_folder(videos: str | Path | None, output: str | Path, language: str = "e
     limit      take only the first N videos at all
     captions / align_captions   for YouTube videos: also take YouTube's captions for the
                first N, and force-align the first M of those, to compare with Whisper
+    asr_models a recogniser per source language, e.g. {"am": "badrex/Ethio-ASR-amharic",
+               "tr": "whisper"}; Whisper large-v3 otherwise (lb_worker.asr)
+    aligners   a forced aligner per language, over lb_worker.asr.DEFAULT_ALIGNERS
+    bucket     a Hugging Face bucket (``namespace/name[/prefix]``) the output is pushed to
     options    any other run option (app/runs.py DEFAULTS), e.g. {"asr_model": "large-v3-turbo"}
     """
     if videos and (Path(videos) / "manifest.json").exists():  # a run folder, given as the videos: continue it
         print(f"{videos} is a run folder: continuing that run")
-        return run_manifest(videos, hf_token, cache)
+        return run_manifest(videos, hf_token, cache, bucket)
     _repo_on_path()
+    from . import asr
+
+    hf_token = hf_token or secret("HF_TOKEN")
     out = Path(output)
     out.mkdir(parents=True, exist_ok=True)
     _env(hf_token, Path(cache) if cache else out / "cache")
@@ -162,7 +257,8 @@ def run_folder(videos: str | Path | None, output: str | Path, language: str = "e
     db._local.c = None
     settings.PATH.write_text(json.dumps({
         "roots": [{"id": "here", "name": "this machine", "kind": "local", "path": str(out.resolve())}], "active": "here",
-        "aligners": aligners or settings.DEFAULTS["aligners"]}), encoding="utf-8")
+        "aligners": {**asr.DEFAULT_ALIGNERS, **settings.DEFAULTS["aligners"], **(aligners or {})}}),
+        encoding="utf-8")
 
     title = name or (Path(videos).name if videos else "YouTube")
     pids: list[str] = []
@@ -200,7 +296,7 @@ def run_folder(videos: str | Path | None, output: str | Path, language: str = "e
     if not pids:
         raise SystemExit("No videos found: check the folder path or the links.")
     opts = {"dub_limit": dub_limit, "takes": takes, "captions_download": captions, "captions_align": align_captions,
-            "align_subtitles": align_subtitles} | (options or {})
+            "align_subtitles": align_subtitles, "asr_models": asr_models or {}} | (options or {})
     r = runs.create_for(pids, "here", stages or ALL, opts, name=title, submit=False)
     print(f"run {r['run']}: {r['videos']} videos, stages {', '.join(r['stages'])}")
-    return run_manifest(r["dir"], hf_token, cache)
+    return run_manifest(r["dir"], hf_token, cache, bucket)

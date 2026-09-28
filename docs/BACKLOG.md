@@ -61,6 +61,8 @@ local disks); then teams working on shared metadata with distributed compute.*
 - [x] **SCALE** Plan approved 2026-09-27: [SCALE_PLAN.md](SCALE_PLAN.md) (certify E1–E6, then build M1–M8, acceptance, merge).
 - [x] **SCALE E1+E2** Run on a Colab T4 2026-09-27 (docs/CERTIFICATION.md): separation fp16 2.7× faster (now default), batching gives nothing (GPU ≥ 88 % busy in every stage), Whisper 27× real time, OmniVoice 53 takes/min; identity: link id / quick hash / fingerprint (8-bit threshold, offsets exact).
 - [x] **SCALE merge** 2026-09-27 (owner): exp/scale fast-forwarded into main; old main kept as `main-before-scale`; notebooks download `main`.
+- [x] **RES** Notebook for Colab and Kaggle: ASR per source language (Whisper, or a named HF model; Amharic built in), default aligners for ~27 languages, HF_TOKEN from secrets, results pushed to a Hugging Face bucket after every stage; app: bucket devices, Sync, Runs on devices, results opened by themselves (2026-09-28).
+- [ ] **RES** End-to-end on Kaggle → bucket → app with two 6 Minute English videos; then a Turkish and an Amharic source.
 - [ ] **SCALE E1 Kaggle** Same notebook on Kaggle 2 × T4 (account needs phone verification for GPU).
 - [ ] **SCALE E3** Translation bench notebook (Google, rephrase, TranslateGemma, NLLB, Gemma 4; rating page for 2–3 Amharic speakers).
 - [ ] **SCALE E4–E6** OmniVoice reference length; Supabase + HF bucket round trip; Drive two-writer test. Then `docs/CERTIFICATION.md` and owner approval of Phase B.

@@ -56,6 +56,31 @@ OUTPUT/
   cache/                      downloaded models (kept for next time)
 ```
 
+## On Kaggle, with a Hugging Face bucket (no Google Drive)
+
+1. Kaggle → Create → New notebook → File → Import notebook → Link:
+   `https://raw.githubusercontent.com/LetPastorSpeakInYourLanguage/lang_recomp/main/colab/lang_bridge.ipynb`.
+2. Settings → Accelerator **GPU T4 ×2**, Internet **on** (needs a phone-verified account).
+3. Add-ons → Secrets → add `HF_TOKEN` (a Hugging Face token that can **write** to your bucket
+   and read gated models) and tick it for this notebook. Colab: the key icon, same name.
+4. On huggingface.co create a Storage Bucket (e.g. `your-org/lang-bridge-runs`); put its name in
+   `BUCKET`. Results are pushed there after every stage and at the end.
+5. In the app: Settings → Folders → add one, **HF bucket**, with the bucket name and a folder on
+   this PC to sync into. Home → *Runs on …* → **Sync**: the run's progress shows (it pulls every
+   minute while the run is going) and its results open by themselves; the dubs play from there.
+
+A run that stops can continue anywhere: set `RUN_FOLDER` to `…/runs/<run>` (the notebook's
+output folder) with the same `BUCKET`; it is pulled from the bucket first.
+
+## Languages
+
+`LANGUAGE` is the videos' language, `TARGETS` the languages to dub into — any direction
+(English → Amharic, Amharic → English, Turkish → Oromo…). Speech recognition: Whisper
+large-v3 for the languages it handles well; name a Hugging Face model for any language in
+`ASR_MODELS` (`lang=repo`; CTC models such as wav2vec2/MMS or Whisper fine-tunes). Amharic
+uses `badrex/Ethio-ASR-amharic` unless told otherwise. Word alignment has built-in models for
+~27 languages (e.g. Turkish `mpoyraz/wav2vec2-xls-r-300m-cv7-turkish`); add others in `ALIGNERS`.
+
 ## Look at it in the app
 
 Home → **Open a shared work** → the `.lbwork` path as your PC sees it (for Drive:

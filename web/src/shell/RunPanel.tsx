@@ -96,7 +96,7 @@ export default function RunPanel({ owner, videos, name, state, fixedRoot, onOpen
   );
 }
 
-function RunRow({ r, state, onOpened }: { r: RunInfo; state: AppState | null; onOpened: () => void }) {
+export function RunRow({ r, state, onOpened }: { r: RunInfo; state: AppState | null; onOpened: () => void }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const dev = state?.roots.find((x) => x.id === r.root);

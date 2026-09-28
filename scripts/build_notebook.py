@@ -24,74 +24,90 @@ def cell(kind: str, src: str, form: bool = False) -> dict:
 
 CELLS = [
     cell("markdown", f"""
-# Lang-Bridge — dub a folder of videos
+# Lang-Bridge — dub videos on a GPU
 
-Runs the Lang-Bridge pipeline on a GPU: **fetch → transcribe → translate → voice → mix**,
-on your own videos (a folder, or YouTube links), and writes everything to an output folder
-you choose. Open the results in the Lang-Bridge app to check, fix and listen.
+Runs the Lang-Bridge pipeline: **fetch → transcribe → translate → voice → mix**, on a
+folder of videos and/or YouTube links, from any source language into any target language.
+Open the results in the Lang-Bridge app to check, fix and listen.
 
-1. **Runtime → Change runtime type → T4 GPU** (or any GPU).
-2. If your videos are in Google Drive, mount it yourself (folder icon on the left → *Mount Drive*).
-3. Fill in the settings below, then **Runtime → Run all**.
+**Colab**: Runtime → Change runtime type → T4 GPU; mount Drive yourself if your videos are there.
+**Kaggle**: Settings → Accelerator **GPU T4 ×2**, Internet **on**.
 
-Safe to stop at any time: running it again with the same settings continues where it
-stopped. Guide: [{REPO}/tree/main/colab]({REPO}/tree/main/colab)
+Your Hugging Face token: add it once as a secret named `HF_TOKEN` (Colab: the key icon on
+the left; Kaggle: Add-ons → Secrets) and leave the setting below empty. Then fill in the
+settings and **Run all**. Safe to stop at any time: see RUN_FOLDER to continue.
+Guide: [{REPO}/tree/main/colab]({REPO}/tree/main/colab)
 """),
     cell("code", """
 #@title Settings
-VIDEOS = "/content/drive/MyDrive/Libraries/Teachings"  #@param {type:"string"}
-#@markdown A folder of videos (subfolders are works; `name.srt` beside a video is used instead of transcribing). Leave empty to use only YouTube links.
+VIDEOS = ""  #@param {type:"string"}
+#@markdown A folder of videos (subfolders are works; `name.srt` beside a video is used instead of transcribing).
 YOUTUBE = ""  #@param {type:"string"}
-#@markdown YouTube video or playlist links, separated by spaces (optional).
-OUTPUT = "/content/drive/MyDrive/LangBridge-output"  #@param {type:"string"}
-#@markdown Where results go: the dubbed videos, transcripts, and the package the app opens.
+#@markdown YouTube video or playlist links, separated by spaces.
 LANGUAGE = "en"  #@param {type:"string"}
+#@markdown The videos' language (e.g. `en`, `tr`, `am`).
 TARGETS = "am"  #@param {type:"string"}
-#@markdown Languages to dub into, e.g. `am om ti`.
+#@markdown Languages to dub into, e.g. `am om ti` or `en`.
+ASR_MODELS = "am=badrex/Ethio-ASR-amharic"  #@param {type:"string"}
+#@markdown A speech recogniser per source language from Hugging Face (`lang=repo`, space separated). Languages not named use Whisper large-v3.
+ALIGNERS = ""  #@param {type:"string"}
+#@markdown Word aligners per language (`lang=repo`), over the built-in ones for ~27 languages.
 STAGES = "fetch transcribe translate voice mix"  #@param {type:"string"}
 #@markdown Which stages: e.g. `fetch transcribe` for transcripts only.
-DUB_LIMIT = 3  #@param {type:"integer"}
+DUB_LIMIT = 0  #@param {type:"integer"}
 #@markdown Voice and mix only the first N videos (0 = all). The rest are transcribed and translated.
 LIMIT = 0  #@param {type:"integer"}
 #@markdown Work on only the first N videos (0 = all).
+OUTPUT = ""  #@param {type:"string"}
+#@markdown Where results go. Empty: this machine's disk (`/kaggle/working/lb-out` or `/content/lb-out`); or a Drive folder.
+BUCKET = ""  #@param {type:"string"}
+#@markdown A Hugging Face bucket (`namespace/name`) to push results to after every stage; the app pulls it from there.
 CAPTIONS = 0  #@param {type:"integer"}
 ALIGN_CAPTIONS = 0  #@param {type:"integer"}
 #@markdown YouTube only: also take YouTube's captions for the first N videos, force-align the first M, and compare with Whisper.
 RUN_FOLDER = ""  #@param {type:"string"}
-#@markdown Or: a run folder the Lang-Bridge app prepared (`…/runs/<run>`). When set, the settings above are ignored.
+#@markdown Continue a run: its folder (`…/runs/<run>`, from the app or a stopped run). With BUCKET set it is pulled from the bucket first. Settings above are then ignored.
 HF_TOKEN = ""  #@param {type:"string"}
-#@markdown Your Hugging Face token (speaker detection uses a gated model: accept its terms on huggingface.co first). **Do not share or commit this notebook with your token filled in.**
+#@markdown Leave empty to use the `HF_TOKEN` secret. **Never share or commit this notebook with a token filled in.**
 """),
     cell("code", f"""
 #@title Get Lang-Bridge
 import os, subprocess, sys
-if not os.path.exists('/content/lang_recomp'):
-    subprocess.run(['git', 'clone', '-q', '--depth', '1', '-b', '{BRANCH}', '{REPO}', '/content/lang_recomp'], check=True)
+KAGGLE = bool(os.environ.get('KAGGLE_KERNEL_RUN_TYPE'))
+HOME = '/kaggle/working' if KAGGLE else '/content'
+CODE = HOME + '/lang_recomp'
+if not os.path.exists(CODE):
+    subprocess.run(['git', 'clone', '-q', '--depth', '1', '-b', '{BRANCH}', '{REPO}', CODE], check=True)
 else:
-    subprocess.run(['git', '-C', '/content/lang_recomp', 'pull', '-q'], check=False)
-sys.path[:0] = ['/content/lang_recomp', '/content/lang_recomp/worker']
-print(subprocess.run(['git', '-C', '/content/lang_recomp', 'log', '-1', '--format=Lang-Bridge %h (%cd)'], capture_output=True, text=True).stdout)
+    subprocess.run(['git', '-C', CODE, 'pull', '-q'], check=False)
+sys.path[:0] = [CODE, CODE + '/worker']
+print(subprocess.run(['git', '-C', CODE, 'log', '-1', '--format=Lang-Bridge %h (%cd)'], capture_output=True, text=True).stdout)
 # the stages install what they need (Whisper, pyannote, the separator, OmniVoice) the first time they run
 """, form=True),
     cell("code", """
 #@title Run
 from lb_worker.research import run_folder, run_manifest
 
+pairs = lambda text: dict(p.split('=', 1) for p in text.split() if '=' in p)
+out = OUTPUT.strip() or HOME + '/lb-out'
 if RUN_FOLDER.strip():
-    result = run_manifest(RUN_FOLDER.strip(), hf_token=HF_TOKEN or None)
+    result = run_manifest(RUN_FOLDER.strip(), hf_token=HF_TOKEN or None, bucket=BUCKET.strip() or None)
 else:
-    result = run_folder(VIDEOS.strip() or None, OUTPUT, LANGUAGE, TARGETS.split(), STAGES.split(),
+    result = run_folder(VIDEOS.strip() or None, out, LANGUAGE.strip(), TARGETS.split(), STAGES.split(),
                         youtube=YOUTUBE.split() or None, dub_limit=DUB_LIMIT or None, limit=LIMIT or None,
-                        captions=CAPTIONS, align_captions=ALIGN_CAPTIONS, hf_token=HF_TOKEN or None)
+                        captions=CAPTIONS, align_captions=ALIGN_CAPTIONS, hf_token=HF_TOKEN or None,
+                        asr_models=pairs(ASR_MODELS), aligners=pairs(ALIGNERS), bucket=BUCKET.strip() or None)
 """, form=True),
     cell("markdown", """
 ## Look at the results
 
-In the Lang-Bridge app: **Home → Open a shared work**, and give the `.lbwork` path printed
-above (as your PC sees it, e.g. `G:\\My Drive\\LangBridge-output\\runs\\…\\results\\….lbwork`).
-Nothing is copied: the app plays the videos and dubs from the output folder.
+- With **BUCKET**: in the Lang-Bridge app, add the bucket as a device (Settings → Folders →
+  Hugging Face bucket), then **Sync**: the run's progress shows as it goes, and **Open
+  results** brings the work in; the dubs play from the synced folder.
+- With **OUTPUT on Drive**: Home → **Open a shared work**, and give the `.lbwork` path printed
+  above as your PC sees it (e.g. `G:/My Drive/…/results/….lbwork`).
 
-Done with the GPU? **Runtime → Disconnect and delete runtime**.
+Done with the GPU? Colab: **Runtime → Disconnect and delete runtime**; Kaggle: **Stop session**.
 """),
 ]
 

@@ -37,7 +37,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from .. import batch_asr
+from .. import asr, batch_asr
 from ..deps import ensure
 from ..registry import stage
 
@@ -101,7 +101,7 @@ class Run:
         with self.lock:
             tmp = self.dir / "state.json.tmp"
             tmp.write_text(json.dumps(self.state, ensure_ascii=False, indent=1), encoding="utf-8")
-            os.replace(tmp, self.dir / "state.json")
+            _replace(tmp, self.dir / "state.json")
 
     def mark(self, uid: str, step: str, value) -> None:
         with self.lock:
@@ -119,10 +119,13 @@ class Run:
             out = self.dir / "results" / f"{uid}.lbwork.part"
             A.package.export(sid, json.loads(A.db.row("SELECT targets FROM series WHERE id=?", sid)["targets"]),
                              media="ref", out=out, ref_root=self.root, note=f"run {self.id}: through {stage_name}")
-            os.replace(out, self.dir / "results" / f"{uid}.lbwork")
+            _replace(out, self.dir / "results" / f"{uid}.lbwork")
         self.state["stages"][stage_name] = {"done": time.time()}
         self.save_state()
         self.log(f"· results saved (through '{stage_name}')")
+        hook = getattr(self.ctx, "on_publish", None)
+        if hook:  # e.g. push the output folder to a Hugging Face bucket (lb_worker.research)
+            hook(stage_name)
 
     # ---- the run -------------------------------------------------------------------------
     def go(self) -> dict:
@@ -282,17 +285,24 @@ class Run:
                 subs[pid] = f
         need = {pid: a for pid, a in audios.items() if pid not in subs}
         docs = {}
+        lang = self.man.get("src_lang")
+        kind, asr_model = asr.choose(lang, self.opt.get("asr_models"), self.opt.get("asr_model", "large-v3"))
         if need:
-            size = self.opt.get("asr_model", "large-v3")
-            whisper = ctx.model(f"whisper:{size}", lambda: load_whisper(size, self.log))
-            docs = batch_asr.transcribe_many(whisper, need, self.man.get("src_lang"), size)
+            if kind == "whisper":
+                if not asr.whisper_is_good(lang):
+                    self.log(f"note: Whisper is weak for '{lang}'; name a model for it in ASR_MODELS")
+                whisper = ctx.model(f"whisper:{asr_model}", lambda: load_whisper(asr_model, self.log))
+                docs = batch_asr.transcribe_many(whisper, need, lang, asr_model)
+            else:
+                pipe = ctx.model(f"asr:{asr_model}", lambda: asr.load_hf(asr_model, self.log))
+                docs = asr.transcribe_hf(pipe, need, lang, asr_model)
             self.log(f"transcribed {len(need)} videos ({sum(len(a) for a in need.values()) / SR / 60:.0f} min) "
-                     f"in one batched pass, {time.time() - t:.0f} s")
+                     f"with {asr_model} in one batched pass, {time.time() - t:.0f} s")
         align_subs = bool(self.opt.get("align_subtitles", True))
         for pid, path in subs.items():
             docs[pid] = A.captions.load(Path(path).read_text(encoding="utf-8", errors="replace"), self.man.get("src_lang"))
             docs[pid]["aligned"] = False
-        repo = (self.opt.get("aligners") or {}).get(self.man.get("src_lang") or "")
+        repo = (self.opt.get("aligners") or {}).get(lang or "") or asr.DEFAULT_ALIGNERS.get(lang or "")
         aligner = ctx.model(f"aligner:{repo}", lambda: load_aligner(repo)) if repo else None
         pyannote = ctx.model("pyannote", lambda: load_pyannote())
         align_trial = set(self.pids[: int(self.opt.get("captions_align", 0))])
@@ -302,7 +312,9 @@ class Run:
             wav = ctx.work / f"{uid}.wav"
             _write_wav(wav, audios[pid])
             doc = docs[pid]
-            if aligner and (pid not in subs or align_subs):
+            # a CTC recogniser already timed its own words: aligning with the same model adds nothing
+            same_model = kind == "hf" and repo == asr_model and pid not in subs
+            if aligner and not same_model and (pid not in subs or align_subs):
                 align_doc(doc, audios[pid], SR, aligner, repo, lambda *_: None)
                 doc["aligned"] = True
             cap = self._caption_file(pid)
@@ -316,13 +328,14 @@ class Run:
                 _dump(dest / "whisper.json", doc)
             kw = {"max_speakers": self.opt["max_speakers"]} if self.opt.get("max_speakers") else {}
             dia = diarize_wav(pyannote, wav, kw, "pyannote/speaker-diarization-community-1")
-            asr = stamp_speakers(doc, dia["exclusive"])
-            _dump(dest / "asr_spk.json", asr)
+            spk_doc = stamp_speakers(doc, dia["exclusive"])
+            _dump(dest / "asr_spk.json", spk_doc)
             _dump(dest / "diarization.json", dia)
             wav.unlink(missing_ok=True)
             with self.lock:
-                A.project.ingest_docs(pid, asr, dia)
-                A.db.set_meta(pid, transcript={"source": "subtitles" if pid in subs else "whisper",
+                A.project.ingest_docs(pid, spk_doc, dia)
+                A.db.set_meta(pid, transcript={"source": "subtitles" if pid in subs else "whisper" if kind == "whisper" else "asr",
+                                               "model": None if pid in subs else asr_model,
                                                "aligned": bool(doc.get("aligned")), "run": self.id})
                 if self.opt.get("assume_checked", True):  # the owner's rule for this run: checks pass
                     for a in A.db.rows("SELECT label FROM appearances WHERE source_id=? AND status='proposed'", pid):
@@ -486,11 +499,11 @@ class Run:
                 {"key": it["key"], "wav": it["out"], "speaker": meta[it["key"]]["speaker"], "text": it["text"],
                  "slot_s": meta[it["key"]]["slot_s"]} for it in made]}, ensure_ascii=False), encoding="utf-8")
             res = ctx.work / f"score_{lang}_res.json"
-            asr = (self.opt.get("aligners") or {}).get(lang) or "none"
-            self.log(f"scoring {len(made)} {lang} takes (voice likeness" + ("" if asr == "none" else ", read back by ASR")
+            reader = (self.opt.get("aligners") or {}).get(lang) or asr.DEFAULT_ALIGNERS.get(lang) or "none"
+            self.log(f"scoring {len(made)} {lang} takes (voice likeness" + ("" if reader == "none" else ", read back by ASR")
                      + ") to pick the best take per line")
             t = time.time()
-            sh([sys.executable, TTS / "score.py", "--manifest", sman, "--out", res, "--no-emotion", "--asr", asr], ctx)
+            sh([sys.executable, TTS / "score.py", "--manifest", sman, "--out", res, "--no-emotion", "--asr", reader], ctx)
             scores = json.loads(res.read_text(encoding="utf-8"))["items"] if res.exists() else {}
             self.log(f"scored {len(scores)} takes in {time.time() - t:.0f} s")
             per: dict[str, dict] = {}
@@ -526,6 +539,19 @@ class Run:
                     self.log(f"mix failed: {str(e)[-300:]}")
         for pid in self.dub_set():
             self.mark(self.uid[pid], "mix", "done")
+
+
+def _replace(src: Path, dst: Path) -> None:
+    """os.replace, retried: a reader (a bucket push, Drive for Desktop, an antivirus) may hold
+    the old file for a moment, and Windows refuses to replace an open file."""
+    for attempt in range(20):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if attempt == 19:
+                raise
+            time.sleep(0.1 * (attempt + 1))
 
 
 def _write_wav(path: Path, x) -> None:

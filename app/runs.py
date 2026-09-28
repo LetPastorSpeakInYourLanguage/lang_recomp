@@ -100,7 +100,7 @@ def create_for(pids: list[str], root_id: str, stages: list[str] | None = None, o
         "run": run_id, "name": name, "created": time.time(), "works": works, "src_lang": works[0]["src_lang"] if works else "en",
         "stages": stages, "sources": [project.get(p)["uid"] for p in pids], "options": opts},
         ensure_ascii=False, indent=1), encoding="utf-8")
-    if r["kind"] == "colab":
+    if r["kind"] in ("colab", "bucket"):
         submit = False  # a Drive folder is never watched: a person runs it with colab/lang_bridge.ipynb
     # prepared only (no job): someone runs the folder with the research runner (run_manifest)
     job = project.queue(r["id"]).submit("pipeline", {"run": run_id}) if submit else f"{PREPARED}{run_id}"
@@ -123,9 +123,23 @@ def listing(owner: str, auto_open: bool = True) -> list[dict]:
     a run saved since they were last opened are brought in by themselves (in the background)."""
     out = [status(j["root"], j["role"], j["id"].split("@")[0]) for j in db.rows(
         "SELECT * FROM jobs WHERE project_id=? AND stage='pipeline' ORDER BY created DESC", owner)]
+    return _open_new(owner, out) if auto_open else out
+
+
+def scan(root_id: str, auto_open: bool = True) -> list[dict]:
+    """Every run in a device's folder, whoever made it (the app, or a notebook on its own),
+    newest first; new results come into the app by themselves, as in ``listing``."""
+    d = _root(root_id) / "runs"
+    found = sorted((p for p in d.glob("*/manifest.json")), key=lambda p: p.parent.name, reverse=True) if d.exists() else []
+    out = [status(root_id, p.parent.name, f"{PREPARED}{p.parent.name}") for p in found]
+    return _open_new(f"root:{root_id}", out) if auto_open else out
+
+
+def _open_new(owner: str, out: list[dict]) -> list[dict]:
     for r in out:
         at = r.get("results_at")
-        if auto_open and at and at > (r.get("opened_at") or 0) and time.time() - at > SETTLE_S                 and (r["root"], r["run"]) not in _opening:
+        fresh = at and at > (r.get("opened_at") or 0) and time.time() - at > SETTLE_S
+        if fresh and (r["root"], r["run"]) not in _opening:
             _opening.add((r["root"], r["run"]))
             r["opening"] = True
             tasks.start(owner, "open run results", _auto_open, r["root"], r["run"], serial="run-results")
@@ -167,7 +181,7 @@ def status(root_id: str, run_id: str, job_id: str | None = None) -> dict:
     srcs = state.get("sources", {})
     res = sorted((d / "results").glob("*.lbwork")) if (d / "results").exists() else []
     results_at = max((f.stat().st_mtime for f in res), default=None)
-    if settings.root(root_id).get("kind") == "colab":  # run by hand in the notebook: no queue to ask
+    if settings.root(root_id).get("kind") in ("colab", "bucket"):  # run by hand in a notebook: no queue to ask
         job_id = f"{PREPARED}{run_id}"
     if job_id and job_id.startswith(PREPARED):  # run by hand: only the folder tells how far it got
         seen = max((p.stat().st_mtime for p in (d / "state.json", d / "log.txt") if p.exists()), default=0)
