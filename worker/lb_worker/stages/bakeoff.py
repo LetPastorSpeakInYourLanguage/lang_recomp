@@ -15,6 +15,7 @@ each other. A system that fails (install, OOM, bad output) is recorded, not fata
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -32,13 +33,15 @@ TTS = Path(__file__).resolve().parents[1] / "tts"
 DEFAULT_SYSTEMS = ["omni_bank", "omni_self_dur", "omniam_bank", "edge_raw", "edge_seedvc"]
 
 
-def sh(cmd, ctx, cwd=None, timeout=3600) -> subprocess.CompletedProcess:
+def sh(cmd, ctx, cwd=None, timeout=3600, env: dict | None = None, tag: str = "") -> subprocess.CompletedProcess:
     """Run a command, streaming its output into the job log as it happens (the log
     reaches Drive with every heartbeat), so a runtime that dies mid-command still
-    shows how far it got."""
-    ctx.log("$ " + " ".join(str(c) for c in cmd)[:300])
+    shows how far it got. ``env`` adds variables (e.g. CUDA_VISIBLE_DEVICES to pick a GPU);
+    ``tag`` prefixes its lines (e.g. "[gpu 1] ") when several run side by side."""
+    ctx.log(f"$ {tag}" + " ".join(str(c) for c in cmd)[:300])
     p = subprocess.Popen([str(c) for c in cmd], cwd=cwd, stdout=subprocess.PIPE,
-                         stderr=subprocess.STDOUT, text=True, errors="replace", bufsize=1)
+                         stderr=subprocess.STDOUT, text=True, errors="replace", bufsize=1,
+                         env={**os.environ, **env} if env else None)
     lines: list[str] = []
     deadline = time.time() + timeout
     for line in p.stdout:
@@ -48,7 +51,7 @@ def sh(cmd, ctx, cwd=None, timeout=3600) -> subprocess.CompletedProcess:
         if line:
             lines.append(line)
             if len(lines) <= 5000 and "%|" not in line:
-                ctx.log("  | " + line[:300])
+                ctx.log(f"  | {tag}" + line[:300])
         if time.time() > deadline:
             p.kill()
             lines.append(f"killed after {timeout}s")

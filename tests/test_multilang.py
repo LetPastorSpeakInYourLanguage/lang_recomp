@@ -106,3 +106,52 @@ def test_amharic_to_english_on_kaggle_through_a_bucket_and_the_app_plays_the_dub
         assert db.meta(pid)["transcript"]["source"] == "asr"  # the Amharic recogniser, not Whisper
         assert project.sentences(pid, "en") and mix.mix_dir(pid, "en").is_relative_to(tmp_path / "mirror")
     db._local.c = None
+
+
+def test_two_gpus_share_the_voicing_and_the_scoring(tmp_path, monkeypatch, stubs):  # noqa: F811
+    from lb_worker.stages import bakeoff
+    from lb_worker.stages import run as runmod
+
+    monkeypatch.setattr(research, "_scratch", lambda: tmp_path / "scratch")
+    monkeypatch.setattr(runmod, "gpu_count", lambda: 2)
+    monkeypatch.setattr(runmod.Run, "_start_gpu1", lambda self: setattr(self, "_sep", None))
+    inner, gpus = bakeoff.sh, []
+
+    def sh(cmd, ctx, cwd=None, timeout=3600, env=None, tag=""):
+        gpus.append((Path(str(cmd[1])).name, (env or {}).get("CUDA_VISIBLE_DEVICES")))
+        return inner(cmd, ctx, cwd, timeout)
+
+    monkeypatch.setattr(bakeoff, "sh", sh)
+    videos = tmp_path / "in"
+    videos.mkdir()
+    _tone(videos / "a.mp4", 4, 440, video=True)
+    res = research.run_folder(videos, tmp_path / "out", "en", ["am"], hf_token="hf_test")
+    assert res["videos"] == 1 and list((tmp_path / "out").rglob("*.am.mp4"))
+    assert sorted(gpus) == [("omnivoice_gen.py", "0"), ("omnivoice_gen.py", "1"), ("score.py", "0"), ("score.py", "1")]
+    db._local.c = None
+
+
+def test_a_run_where_nothing_could_be_transcribed_stops_and_shows_as_failed(tmp_path, monkeypatch, stubs):  # noqa: F811
+    from lb_worker.stages import run as runmod
+
+    monkeypatch.setattr(research, "_scratch", lambda: tmp_path / "scratch")
+
+    def broken(*a, **k):
+        raise AttributeError("type object 'TraceFlags' has no attribute 'RANDOM_TRACE_ID'")
+
+    monkeypatch.setattr(runmod.batch_asr, "transcribe_many", broken)
+    videos = tmp_path / "in"
+    videos.mkdir()
+    _tone(videos / "a.mp4", 4, 440, video=True)
+    out = tmp_path / "out"
+    saved = (db.DATA, db.DB_PATH, settings.PATH)
+    with pytest.raises(RuntimeError, match="no video could be transcribed"):
+        research.run_folder(videos, out, "en", ["am"], hf_token="hf_test")
+    run_dir = next((out / "runs").iterdir())
+    db.DATA, db.DB_PATH, settings.PATH = saved
+    db._local.c = None
+    s = settings.load()
+    settings.save(s | {"roots": s["roots"] + [{"id": "k", "name": "Kaggle", "kind": "bucket", "bucket": "t/r", "path": str(out)}]})
+    st = runs.status("k", run_dir.name, "x")
+    assert st["state"] == "failed" and "no video could be transcribed" in st["note"]
+    db._local.c = None

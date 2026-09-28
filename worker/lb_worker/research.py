@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import threading
@@ -95,6 +96,20 @@ def _scratch() -> Path:
     d = base / "lang-bridge-scratch"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def _video_entry(link: str) -> dict:
+    """A single video link with its real id and title (the title names the work's source)."""
+    try:
+        p = subprocess.run([sys.executable, "-m", "yt_dlp", "--skip-download", "--no-playlist", "--no-warnings",
+                            "--print", "%(id)s\t%(title)s", "--", link], capture_output=True, text=True, timeout=120)
+        out = p.stdout.strip().splitlines()
+        if p.returncode == 0 and out and "\t" in out[-1]:
+            vid, title = out[-1].split("\t", 1)
+            return {"id": vid, "title": title, "url": link}
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return {"id": link.rsplit("=", 1)[-1][-11:], "title": link, "url": link}
 
 
 def secret(name: str) -> str | None:
@@ -284,7 +299,7 @@ def run_folder(videos: str | Path | None, output: str | Path, language: str = "e
             if not link:
                 continue
             entries = feeds.listing(link, 500)["entries"] if ("list=" in link or "/@" in link or "/channel/" in link) \
-                else [{"id": link.rsplit("=", 1)[-1][-11:], "title": link, "url": link}]
+                else [_video_entry(link)]
             for e in reversed(entries):  # oldest first
                 try:
                     pids.append(series.add_source(s["id"], e["title"][:120], e["url"], origin_id=e["id"], defer=True)["id"])

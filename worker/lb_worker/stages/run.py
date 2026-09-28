@@ -38,7 +38,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from .. import asr, batch_asr
-from ..deps import ensure
+from ..deps import ensure, gpu_count
 from ..registry import stage
 
 STAGES = ["fetch", "transcribe", "translate", "voice", "mix"]
@@ -129,6 +129,17 @@ class Run:
 
     # ---- the run -------------------------------------------------------------------------
     def go(self) -> dict:
+        try:
+            return self._go()
+        except BaseException as e:  # recorded in state.json, so the app shows the run as failed
+            self.state["error"] = f"{type(e).__name__}: {str(e)[-400:]}"
+            self.state["finished"] = time.time()
+            self.save_state()
+            raise
+        finally:
+            self._stop_gpu1()
+
+    def _go(self) -> dict:
         A = self.app
         t0 = time.time()
         ensure("yt-dlp", probe="yt_dlp")  # fetching, captions
@@ -154,6 +165,8 @@ class Run:
                  f"languages {', '.join(self.langs)}")
         if "fetch" in self.stages or "transcribe" in self.stages:
             self.fetch_and_transcribe()
+            if "transcribe" in self.stages and not any(self.done(self.uid[p], "transcribe") for p in self.pids):
+                raise RuntimeError("no video could be transcribed: see the errors above")
         for name, fn in (("translate", self.translate), ("voice", self.voice), ("mix", self.mix)):
             if name in self.stages and not self.ctx.cancelled():
                 t = time.time()
@@ -184,7 +197,59 @@ class Run:
         v = self.app.project.media_dir(pid) / "video.mp4"
         return v if v.exists() else (Path(p["video"]) if p["video"] and Path(p["video"]).exists() else None)
 
+    def _start_gpu1(self) -> None:
+        """With two GPUs (Kaggle T4 ×2): separate the videos to be dubbed on the second one,
+        in its own process, while the first transcribes them."""
+        self._sep = None
+        if gpu_count() < 2 or "voice" not in self.stages:
+            return
+        from .bakeoff import TTS
+
+        p = subprocess.Popen([sys.executable, str(TTS / "separate.py")], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT, text=True, errors="replace", bufsize=1,
+                             env={**os.environ, "CUDA_VISIBLE_DEVICES": "1"})
+
+        def read():
+            for line in p.stdout:
+                line = line.rstrip().split(chr(13))[-1]
+                if line and not line.startswith(("INFO:", "WARNING:", "DEBUG:")) and "%|" not in line:
+                    self.log("  [gpu 1] " + line[:300])
+
+        reader = threading.Thread(target=read, daemon=True)
+        reader.start()
+        n = self.opt.get("dub_limit")
+        self._sep = {"proc": p, "reader": reader, "want": set(self.pids if n is None else self.pids[: int(n)])}
+        self.log("separating on the second GPU while the first transcribes")
+
+    def _separate_on_gpu1(self, pid: str, video: Path) -> None:
+        sep = getattr(self, "_sep", None)
+        if not sep or pid not in sep["want"] or self.app.project.stem(pid, "vocals").exists():
+            return
+        job = {"name": self.app.project.get(pid)["name"][:60], "src": str(video),
+               "tmp": str(self.ctx.work / "sep1" / self.uid[pid]), "dest": str(self.app.project.media_dir(pid))}
+        try:
+            sep["proc"].stdin.write(json.dumps(job, ensure_ascii=False) + "\n")
+            sep["proc"].stdin.flush()
+        except OSError:  # the worker is gone: the voice stage separates what is missing
+            pass
+
+    def _stop_gpu1(self, wait: bool = False) -> None:
+        sep = getattr(self, "_sep", None)
+        if not sep:
+            return
+        try:
+            sep["proc"].stdin.close()
+        except OSError:
+            pass
+        if wait:
+            sep["proc"].wait()
+            sep["reader"].join(timeout=10)
+        else:
+            sep["proc"].kill()
+        self._sep = None
+
     def fetch_and_transcribe(self) -> None:
+        self._start_gpu1()
         ready: queue.Queue = queue.Queue()
         t = time.time()
         fetcher = threading.Thread(target=self._fetch_all, args=(ready,), daemon=True)
@@ -220,6 +285,7 @@ class Run:
                 self.mark(uid, "fetch", "done")
                 self.log(f"fetched {k + 1}/{len(self.pids)}: {A.project.get(pid)['name'][:60]}")
                 ready.put(pid)
+                self._separate_on_gpu1(pid, video)
             except Exception as e:  # one video must not stop the others
                 self.mark(uid, "fetch", f"failed: {str(e)[-300:]}")
                 self.log(f"fetch failed: {pid}: {str(e)[-200:]}")
@@ -435,6 +501,26 @@ class Run:
         except ImportError:
             pass
 
+    def _split(self, items: list) -> list[list]:
+        """One part per GPU (every n-th item), or one part."""
+        n = max(1, min(gpu_count(), len(items)))
+        return [items[i::n] for i in range(n)] if n > 1 else [items]
+
+    def _side_by_side(self, cmds: list[list], timeout: int = 3600) -> None:
+        """Commands at once, each on its own GPU; a single one as before."""
+        from .bakeoff import sh
+
+        if len(cmds) == 1:
+            sh(cmds[0], self.ctx, timeout=timeout)
+            return
+        threads = [threading.Thread(target=sh, args=(c, self.ctx), daemon=True,
+                                    kwargs={"timeout": timeout, "env": {"CUDA_VISIBLE_DEVICES": str(i)}, "tag": f"[gpu {i}] "})
+                   for i, c in enumerate(cmds)]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join()
+
     def voice(self) -> None:
         from .analysis import load_separator, separate_file
         from .bakeoff import TTS, pip, sh
@@ -443,6 +529,9 @@ class Run:
         A, ctx = self.app, self.ctx
         dub = self.dub_set()
         self.log(f"voice: {len(dub)} videos")
+        if getattr(self, "_sep", None):
+            self.log("waiting for the separation on the second GPU to finish")
+            self._stop_gpu1(wait=True)
         todo = [pid for pid in dub if not A.project.stem(pid, "vocals").exists()]
         if todo:
             self._free_models()  # Whisper, aligner and pyannote are done: make room
@@ -483,28 +572,39 @@ class Run:
             if todo:
                 if not pip(ctx, "omnivoice"):
                     raise RuntimeError("pip install omnivoice failed")
-                man = ctx.work / f"gen_{lang}.json"
-                man.write_text(json.dumps(items, ensure_ascii=False), encoding="utf-8")
                 from app import langs as L
                 t = time.time()
-                self.log(f"voicing {todo} {lang} takes with OmniVoice ({engine['steps']} steps): loading the model, "
+                parts = self._split(items)
+                self.log(f"voicing {todo} {lang} takes with OmniVoice ({engine['steps']} steps)"
+                         + (f" on {len(parts)} GPUs" if len(parts) > 1 else "") + ": loading the model, "
                          "then a progress line every 30 s")
-                sh([sys.executable, TTS / "omnivoice_gen.py", "--model", engine["model"], "--manifest", man,
-                    "--out", ctx.work / f"gen_{lang}_res.json", "--steps", str(engine["steps"]),
-                    "--language", L.name(lang), "--batch", str(engine.get("batch", 1))], ctx, timeout=12 * 3600)
+                cmds = []
+                for i, part in enumerate(parts):
+                    man = ctx.work / f"gen_{lang}_{i}.json"
+                    man.write_text(json.dumps(part, ensure_ascii=False), encoding="utf-8")
+                    cmds.append([sys.executable, TTS / "omnivoice_gen.py", "--model", engine["model"], "--manifest", man,
+                                 "--out", ctx.work / f"gen_{lang}_{i}_res.json", "--steps", str(engine["steps"]),
+                                 "--language", L.name(lang), "--batch", str(engine.get("batch", 1))])
+                self._side_by_side(cmds, timeout=12 * 3600)
                 self.log(f"voiced {todo} takes in {time.time() - t:.0f} s")
             made = [it for it in items if Path(it["out"]).exists()]
-            sman = ctx.work / f"score_{lang}.json"
-            sman.write_text(json.dumps({"speakers": speakers, "items": [
-                {"key": it["key"], "wav": it["out"], "speaker": meta[it["key"]]["speaker"], "text": it["text"],
-                 "slot_s": meta[it["key"]]["slot_s"]} for it in made]}, ensure_ascii=False), encoding="utf-8")
-            res = ctx.work / f"score_{lang}_res.json"
             reader = (self.opt.get("aligners") or {}).get(lang) or asr.DEFAULT_ALIGNERS.get(lang) or "none"
             self.log(f"scoring {len(made)} {lang} takes (voice likeness" + ("" if reader == "none" else ", read back by ASR")
                      + ") to pick the best take per line")
             t = time.time()
-            sh([sys.executable, TTS / "score.py", "--manifest", sman, "--out", res, "--no-emotion", "--asr", reader], ctx)
-            scores = json.loads(res.read_text(encoding="utf-8"))["items"] if res.exists() else {}
+            cmds, outs = [], []
+            for i, part in enumerate(self._split(made)):
+                sman, res = ctx.work / f"score_{lang}_{i}.json", ctx.work / f"score_{lang}_{i}_res.json"
+                res.unlink(missing_ok=True)
+                sman.write_text(json.dumps({"speakers": speakers, "items": [
+                    {"key": it["key"], "wav": it["out"], "speaker": meta[it["key"]]["speaker"], "text": it["text"],
+                     "slot_s": meta[it["key"]]["slot_s"]} for it in part]}, ensure_ascii=False), encoding="utf-8")
+                cmds.append([sys.executable, TTS / "score.py", "--manifest", sman, "--out", res, "--no-emotion",
+                             "--asr", reader])
+                outs.append(res)
+            self._side_by_side(cmds)
+            scores = {k: v for res in outs if res.exists()
+                      for k, v in json.loads(res.read_text(encoding="utf-8"))["items"].items()}
             self.log(f"scored {len(scores)} takes in {time.time() - t:.0f} s")
             per: dict[str, dict] = {}
             for it in made:

@@ -185,7 +185,7 @@ def status(root_id: str, run_id: str, job_id: str | None = None) -> dict:
         job_id = f"{PREPARED}{run_id}"
     if job_id and job_id.startswith(PREPARED):  # run by hand: only the folder tells how far it got
         seen = max((p.stat().st_mtime for p in (d / "state.json", d / "log.txt") if p.exists()), default=0)
-        st = {"state": "done" if state.get("finished") else "prepared" if not srcs
+        st = {"state": "failed" if state.get("error") else "done" if state.get("finished") else "prepared" if not srcs
               else "running" if time.time() - seen < 15 * 60 else "paused"}
         log = d / "log.txt"
         if log.exists():  # the last line the notebook printed
@@ -195,6 +195,8 @@ def status(root_id: str, run_id: str, job_id: str | None = None) -> dict:
                     st["note"] = f.read().decode("utf-8", "replace").strip().splitlines()[-1][9:]
             except (OSError, IndexError):
                 pass
+        if state.get("error"):
+            st["note"] = state["error"]
         job_id = None
     return {"run": run_id, "name": man.get("name"), "job": job_id, "root": root_id, "state": st.get("state"),
             "progress": st.get("progress"), "note": st.get("note"), "stages": man["stages"], "videos": len(man["sources"]),

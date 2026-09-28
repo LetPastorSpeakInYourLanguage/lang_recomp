@@ -199,6 +199,9 @@ def diarize(ctx) -> dict:
 
 def load_pyannote(name: str = "pyannote/speaker-diarization-community-1"):
     ensure("pyannote.audio>=4", probe="pyannote.audio")
+    # pyannote 4 sends usage telemetry through OpenTelemetry; a mismatched opentelemetry on
+    # Kaggle crashes it (TraceFlags.RANDOM_TRACE_ID, 2026-09-28). It is read at every call.
+    os.environ["PYANNOTE_METRICS_ENABLED"] = "false"
     import torch
     from pyannote.audio import Pipeline
 

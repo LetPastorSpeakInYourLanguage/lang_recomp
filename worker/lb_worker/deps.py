@@ -129,6 +129,16 @@ def hf_snapshot(repo_id: str, log=print, tries: int = 8, **kw) -> str:
     raise AssertionError
 
 
+def gpu_count() -> int:
+    """CUDA GPUs on this machine (Kaggle's T4 ×2: 2)."""
+    try:
+        import torch
+
+        return torch.cuda.device_count() if torch.cuda.is_available() else 0
+    except ImportError:
+        return 0
+
+
 def device() -> str:
     try:
         import torch

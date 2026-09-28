@@ -76,7 +76,7 @@ def stubs(monkeypatch):
     monkeypatch.setattr(analysis, "separate_file", separate_file)
     monkeypatch.setattr(bakeoff, "pip", lambda ctx, *specs: True)
 
-    def sh(cmd, ctx, cwd=None, timeout=3600):
+    def sh(cmd, ctx, cwd=None, timeout=3600, **kw):
         cmd = [str(c) for c in cmd]
         man = json.loads(Path(cmd[cmd.index("--manifest") + 1]).read_text(encoding="utf-8"))
         out = Path(cmd[cmd.index("--out") + 1])
