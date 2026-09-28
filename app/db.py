@@ -239,13 +239,21 @@ def row(sql: str, *args) -> dict | None:
 
 def run(sql: str, *args) -> None:
     c = conn()
-    c.execute(sql, args)
+    try:
+        c.execute(sql, args)
+    except Exception:  # a failed write must not leave its transaction open: that locks the database
+        c.rollback()
+        raise
     c.commit()
 
 
 def many(sql: str, seq) -> None:
     c = conn()
-    c.executemany(sql, seq)
+    try:
+        c.executemany(sql, seq)
+    except Exception:
+        c.rollback()
+        raise
     c.commit()
 
 

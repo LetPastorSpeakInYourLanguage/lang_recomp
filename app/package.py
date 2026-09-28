@@ -301,7 +301,7 @@ def import_work(path: str | Path, fetch: bool = True, ref_root: Path | None = No
                 dest = db.DATA / "works" / w["uid"] / "cast" / c["uid"] / Path(b["file"]).name
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest.write_bytes(z.read(b["file"]))
-                db.run("INSERT INTO cast_bank (character_uid,source_id,line_id,start,end,text,role,manual,path,added)"
+                db.run("INSERT OR IGNORE INTO cast_bank (character_uid,source_id,line_id,start,end,text,role,manual,path,added)"
                        " VALUES (?,?,?,?,?,?,?,?,?,?)", c["uid"], src, b["line_id"], b["start"], b["end"], b["text"],
                        b["role"], b["manual"], str(dest), time.time())
 

@@ -74,6 +74,26 @@ Voicing: 206 takes in 549 s (2.3 s per real line), progress every 30 s. Scoring:
 (2 near-empty takes crashed the Amharic recogniser → now skipped). Mixing + export on the
 CPU: 136–138 s per video (next thing to speed up).
 
+### Kaggle 2 × T4 → Hugging Face bucket → the app (2026-09-28, the end-to-end test)
+
+`colab/e2e_test.ipynb` on Kaggle (T4 ×2), two 6 Minute English episodes, English → Amharic,
+results pushed to the bucket after every stage and pulled by the app on this PC.
+Whole run **11 min** (07:02 → 07:13):
+
+- Whisper large-v3 on GPU 0: 13 min of audio in 56 s; with alignment and speakers, 140 s.
+- Separation (fp16) on GPU 1 at the same time, fed as videos arrived: 108–117 s per video.
+- Voicing split across both GPUs: 147 takes in 202 s — but 36 takes on GPU 0 ran out of
+  memory (Whisper and pyannote were still loaded there) → fixed: models are freed first.
+- Scoring on both GPUs: 47 s. Mixing and export: 35 s per video (Kaggle's CPUs).
+- The app followed the run through the bucket, opened each stage's results by itself and
+  registered both dubbed MP4s (Amharic default track, English second track, both subtitle
+  tracks); 54/81 and 57/72 lines voiced (the rest keep the original voice until the missing
+  takes are made).
+
+Found and fixed on the way: pyannote telemetry vs Kaggle's OpenTelemetry (crash), run marked
+"done" after failing (now "failed" with its reason), separator chatter in the log, a failed
+database write leaving the database locked (now rolled back).
+
 ### Kaggle 2 × T4
 
 _Pending: the account needs phone verification for GPUs._

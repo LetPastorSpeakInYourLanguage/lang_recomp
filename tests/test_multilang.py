@@ -155,3 +155,26 @@ def test_a_run_where_nothing_could_be_transcribed_stops_and_shows_as_failed(tmp_
     st = runs.status("k", run_dir.name, "x")
     assert st["state"] == "failed" and "no video could be transcribed" in st["note"]
     db._local.c = None
+
+
+def test_a_failed_write_does_not_leave_the_database_locked(tmp_path, monkeypatch):
+    import sqlite3
+    import threading
+
+    monkeypatch.setattr(db, "DATA", tmp_path)
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "t.db")
+    db._local.c = None
+    db.run("INSERT INTO chapters (project_id,id,start,title,updated) VALUES ('p',1,0,'',0)")
+    with pytest.raises(sqlite3.IntegrityError):
+        db.run("INSERT INTO chapters (project_id,id,start,title,updated) VALUES ('p',1,0,'',0)")
+    done = []
+
+    def other_thread():  # another connection can still write at once
+        db.run("INSERT INTO chapters (project_id,id,start,title,updated) VALUES ('p',2,5,'',0)")
+        done.append(1)
+
+    t = threading.Thread(target=other_thread)
+    t.start()
+    t.join(10)
+    assert done and len(db.rows("SELECT * FROM chapters WHERE project_id='p'")) == 2
+    db._local.c = None
