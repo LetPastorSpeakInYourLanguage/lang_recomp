@@ -28,6 +28,7 @@ import difflib
 import json
 import os
 import queue
+import re
 import shutil
 import subprocess
 import sys
@@ -212,7 +213,7 @@ class Run:
         def read():
             for line in p.stdout:
                 line = line.rstrip().split(chr(13))[-1]
-                if line and not line.startswith(("INFO:", "WARNING:", "DEBUG:")) and "%|" not in line:
+                if line and not _NOISE.search(line) and "%|" not in line:
                     self.log("  [gpu 1] " + line[:300])
 
         reader = threading.Thread(target=read, daemon=True)
@@ -532,9 +533,11 @@ class Run:
         if getattr(self, "_sep", None):
             self.log("waiting for the separation on the second GPU to finish")
             self._stop_gpu1(wait=True)
+        # Whisper, aligner and pyannote are done: free the GPU for separation and OmniVoice
+        # (Kaggle 2026-09-28: kept loaded, they left OmniVoice out of memory on GPU 0)
+        self._free_models()
         todo = [pid for pid in dub if not A.project.stem(pid, "vocals").exists()]
         if todo:
-            self._free_models()  # Whisper, aligner and pyannote are done: make room
             sep = load_separator(None, 2, self.log)
             for pid in todo:
                 t = time.time()
@@ -639,6 +642,10 @@ class Run:
                     self.log(f"mix failed: {str(e)[-300:]}")
         for pid in self.dub_set():
             self.mark(self.uid[pid], "mix", "done")
+
+
+# library chatter from the separator worker: "INFO:…" or "2026-… - INFO - …" lines, CUDA probes
+_NOISE = re.compile(r"^(INFO|WARNING|DEBUG):| - (INFO|WARNING|DEBUG) - |^Failed to load lib|onnxruntime\.ai/docs")
 
 
 def _replace(src: Path, dst: Path) -> None:

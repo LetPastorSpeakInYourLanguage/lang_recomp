@@ -169,6 +169,9 @@ for it in m["items"]:
         info = sf.info(it["wav"])
         r["dur_s"] = round(info.duration, 2)
         r["dur"] = round(info.duration / it["slot_s"], 2) if it.get("slot_s") else None
+        x16 = load16(it["wav"])
+        if x16.numel() < int(0.5 * 16000) or float(x16.abs().max()) < 1e-3:
+            raise ValueError("too short or silent to score")  # a failed take: never the best one
         r["sim"] = round(float(xvec(it["wav"]) @ centroids[it["speaker"]]), 3)
         if ctc is not None:
             hyp = transcribe(it["wav"])
