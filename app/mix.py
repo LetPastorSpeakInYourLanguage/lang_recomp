@@ -23,13 +23,12 @@ from pathlib import Path
 import numpy as np
 
 from . import cast, db, langs, project, recurring, voice
+from .translate.fit import GAP_S, HARD_STRETCH, LEAD_S, MAX_STRETCH  # shared with the fit estimate before voicing
 
 SR = 48000
-GAP_S = 0.08      # silence kept between consecutive dubbed lines
-LEAD_S = 0.3      # how far a long line may start before the original onset
 FADE_S = 0.01
 DEFAULTS = {"duck_db": 4.0, "keep_nonspeech": True, "nonspeech_db": -3.0, "keep_extras": True,
-            "max_stretch": 1.12, "hard_stretch": 1.25, "loudness_follow": True}
+            "max_stretch": MAX_STRETCH, "hard_stretch": HARD_STRETCH, "loudness_follow": True}
 
 
 # ---- audio io ----------------------------------------------------------------------------

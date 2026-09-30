@@ -14,6 +14,7 @@ from pathlib import Path
 from . import cast, chapters as chaps, db, settings, tasks
 from .jobs.drive_queue import DriveQueue
 from .translate.google_batch import GoogleBatchTranslator
+from .translate import fit as fitting
 from .translate.length import budget
 from .interjections import effective_mode, keep_words, suggest_keep
 from .translate.sentences import sentences as regroup
@@ -539,6 +540,10 @@ def sentences(pid: str, lang: str | None = None) -> list[dict]:
         s["mode"] = effective_mode(s["mode"], s["text"], s["slot_s"], kw)
         s["mode_suggested"] = "keep" if suggest_keep(s["text"], s["slot_s"], kw) else "dub"
         s["budget"] = budget(s["tr"], s["slot_s"], r, lang) if s["tr"] else None
+    # how the translation fits the line's window (neighbours included), before voicing
+    total = (db.row("SELECT duration FROM projects WHERE id=?", pid) or {}).get("duration")
+    for s, f in zip(out, fitting.of_lines(out, lang, fitting.rate_for(lang, r), total)):
+        s["fit"] = f
     return out
 
 
