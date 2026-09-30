@@ -43,7 +43,7 @@ export default function RunPanel({ owner, videos, name, state, fixedRoot, onOpen
       });
       const dev = roots.find((x) => x.id === r.root);
       setMsg(r.dir
-        ? `Prepared a run of ${r.videos} video${r.videos === 1 ? "" : "s"}: run it in colab/lang_bridge.ipynb with RUN_FOLDER = ${r.dir} (as the notebook sees it, e.g. /content/drive/MyDrive/…).`
+        ? `Prepared a run of ${r.videos} video${r.videos === 1 ? "" : "s"}: run it in notebooks/lang_bridge.ipynb with RUN_FOLDER = ${r.dir} (as the notebook sees it, e.g. /content/drive/MyDrive/…).`
         : `Sent ${r.videos} video${r.videos === 1 ? "" : "s"} (${r.works} work${r.works === 1 ? "" : "s"}) to ${dev?.name ?? r.root}.`);
       await runs.reload();
     } catch (e) { setMsg((e as Error).message); } finally { setBusy(false); }

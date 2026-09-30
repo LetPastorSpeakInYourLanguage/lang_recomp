@@ -2,7 +2,9 @@
 
 A job folder is a root the job-bundle protocol runs in. "colab" folders are on
 Google Drive: runs there are only prepared, and a person runs them with
-colab/lang_bridge.ipynb (RUN_FOLDER); "local" folders are on this PC and
+notebooks/lang_bridge.ipynb (RUN_FOLDER); "folder" is any folder on this PC a notebook
+writes its results into (a local Jupyter's OUTPUT, a copied Kaggle output): read only for
+runs, nobody watches it; "local" folders are on this PC and
 served by Local-Worker.cmd. Every job row remembers its folder, so switching the
 active folder never loses track of work already submitted elsewhere.
 """
@@ -16,8 +18,10 @@ from .db import DATA
 
 PATH = DATA / "settings.json"
 # colab: a Drive folder a notebook works in · local: this PC's worker · bucket: a Hugging Face
-# bucket a notebook (Kaggle, Colab, a server) pushes to; "path" is where it is synced on this PC
-KINDS = ("colab", "local", "bucket")
+# bucket a notebook (Kaggle, Colab, a server) pushes to; "path" is where it is synced on this PC ·
+# folder: a results folder on this PC that a notebook wrote (runs are read, never queued)
+KINDS = ("colab", "local", "bucket", "folder")
+NOTEBOOK_KINDS = ("colab", "bucket", "folder")  # run by hand in a notebook: runs are prepared, never queued
 
 DEFAULTS = {
     "roots": [

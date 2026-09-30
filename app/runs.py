@@ -100,8 +100,8 @@ def create_for(pids: list[str], root_id: str, stages: list[str] | None = None, o
         "run": run_id, "name": name, "created": time.time(), "works": works, "src_lang": works[0]["src_lang"] if works else "en",
         "stages": stages, "sources": [project.get(p)["uid"] for p in pids], "options": opts},
         ensure_ascii=False, indent=1), encoding="utf-8")
-    if r["kind"] in ("colab", "bucket"):
-        submit = False  # a Drive folder is never watched: a person runs it with colab/lang_bridge.ipynb
+    if r["kind"] in settings.NOTEBOOK_KINDS:
+        submit = False  # never watched: a person runs it with notebooks/lang_bridge.ipynb
     # prepared only (no job): someone runs the folder with the research runner (run_manifest)
     job = project.queue(r["id"]).submit("pipeline", {"run": run_id}) if submit else f"{PREPARED}{run_id}"
     for owner_id in ([owner] if owner else [f"series:{s}" for s in sids]):
@@ -181,7 +181,7 @@ def status(root_id: str, run_id: str, job_id: str | None = None) -> dict:
     srcs = state.get("sources", {})
     res = sorted((d / "results").glob("*.lbwork")) if (d / "results").exists() else []
     results_at = max((f.stat().st_mtime for f in res), default=None)
-    if settings.root(root_id).get("kind") in ("colab", "bucket"):  # run by hand in a notebook: no queue to ask
+    if settings.root(root_id).get("kind") in settings.NOTEBOOK_KINDS:  # run by hand in a notebook: no queue to ask
         job_id = f"{PREPARED}{run_id}"
     if job_id and job_id.startswith(PREPARED):  # run by hand: only the folder tells how far it got
         seen = max((p.stat().st_mtime for p in (d / "state.json", d / "log.txt") if p.exists()), default=0)

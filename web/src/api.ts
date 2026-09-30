@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 export interface Worker { worker_id: string; online: boolean; age_s: number; current_job: string | null; stages: string[]; device?: string }
 export interface Task { id: string; project_id: string; kind: string; state: string; note: string; progress: number; error: string | null; started: number; finished: number | null }
-export interface Root { id: string; name: string; kind: "colab" | "local" | "bucket"; path: string; bucket?: string }
+export interface Root { id: string; name: string; kind: "colab" | "local" | "bucket" | "folder"; path: string; bucket?: string }
 export interface RootState extends Root { active: boolean; reachable: boolean; online: boolean; workers: Worker[] }
 export interface AppState { roots: RootState[]; active: string; drive: boolean; root: string | null; workers: Worker[]; tasks: Task[] }
 export interface Settings { roots: Root[]; active: string; aligners: Record<string, string>; keep_words: string[] }

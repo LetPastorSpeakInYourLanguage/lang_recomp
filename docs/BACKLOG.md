@@ -27,7 +27,9 @@ local disks); then teams working on shared metadata with distributed compute.*
 
 ## P0 — to hear the first Colab-made dubs
 
-- [ ] **WS P3** Notebooks re-created under `notebooks/`, running anywhere: Kaggle (2 × T4 detected), Colab (1 × T4), local Jupyter; `HF_TOKEN`/`BUCKET`/DEVICE/STORAGE in the settings cell (no platform secrets); app opens plain result folders.
+- [x] **WS P3a** Notebooks re-created under `notebooks/`, running anywhere: Kaggle (2 × T4 detected), Colab (1 × T4), local Jupyter; `HF_TOKEN`/`BUCKET`/DEVICE/STORAGE in the settings cell (no platform secrets); app opens plain result folders (kind `folder`). `lb_worker/env.py`; tested locally (setup cells in a kernel).
+- [ ] **WS P3a** Owner runs `notebooks/e2e_test.ipynb` on Kaggle (T4 x2) and `notebooks/lang_bridge.ipynb` on Colab (T4) with the settings-cell token/bucket; fix what breaks.
+- [ ] **WS P3b** Intel Arc (XPU) shown in the machine card (today the stages use it when present, the card says CPU).
 - [ ] **WS P0** Decisions 35–44, plan in the repo (this commit), SCALE_DESIGN/SCALE_PLAN notes.
 - [ ] **WS P1** `lb_core/`: pure logic out of `app/` (no behaviour change).
 - [ ] **WS P2** Workspace protocol v1 (`lb_core/workspace/`): schema, identity uids, config conflicts, manual over auto, hashes/staleness, tasks, ownership.

@@ -1,6 +1,6 @@
 # Certification results (Phase A of [SCALE_PLAN.md](SCALE_PLAN.md))
 
-Numbers from the benches (`worker/lb_worker/bench/`, notebook `colab/bench_gpu_identity.ipynb`,
+Numbers from the benches (`worker/lb_worker/bench/`, notebook `notebooks/bench_gpu_identity.ipynb` (was `colab/`),
 local `scripts/bench_local.py`). Each section ends with the decision it supports.
 
 ## E1 · GPU speed

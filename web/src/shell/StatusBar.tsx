@@ -6,7 +6,7 @@ export default function StatusBar({ state }: { state: AppState | null }) {
   const online = state?.workers.filter((w) => w.online) ?? [];
   const busy = online.find((w) => w.current_job);
   const others = state?.roots.filter((r) => !r.active && r.online) ?? [];
-  const run = active?.kind === "local" ? "double-click Local-Worker.cmd" : "Colab runs are started by hand in colab/lang_bridge.ipynb";
+  const run = active?.kind === "local" ? "double-click Local-Worker.cmd" : "notebook runs are started by hand in notebooks/lang_bridge.ipynb";
   return (
     <div className="bg-top text-topfg flex items-center gap-12 px-10 h-22 text-10.5 flex-none min-w-0 overflow-hidden">
       <a href="#/settings" className="flex items-center gap-5 opacity-85 whitespace-nowrap text-current no-underline hover:opacity-100" title={state?.root ?? ""}>

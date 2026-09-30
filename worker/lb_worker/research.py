@@ -1,6 +1,6 @@
 """The Lang-Bridge research runner: the heavy ML pipeline, run by hand on a GPU machine.
 
-Use it in a notebook (colab/lang_bridge.ipynb) or on a server, on your own videos, at
+Use it in a notebook (notebooks/lang_bridge.ipynb: Colab, Kaggle, local Jupyter) or on a server, on your own videos, at
 your own discretion — no app, no queue:
 
     from lb_worker.research import run_folder, run_manifest
@@ -92,7 +92,9 @@ def _repo_on_path() -> None:
 
 
 def _scratch() -> Path:
-    base = Path("/content") if Path("/content").exists() else Path(tempfile.gettempdir())
+    """Working copies: LB_WORK (set by the notebook's setup, under its WORK_DIR), else the
+    system's temporary folder."""
+    base = Path(os.environ["LB_WORK"]) if os.environ.get("LB_WORK") else Path(tempfile.gettempdir()) / "lang-bridge"
     d = base / "lang-bridge-scratch"
     d.mkdir(parents=True, exist_ok=True)
     return d
@@ -113,22 +115,21 @@ def _video_entry(link: str) -> dict:
 
 
 def secret(name: str) -> str | None:
-    """A secret from the environment, Kaggle's Secrets (Add-ons → Secrets) or Colab's
-    Secrets (the key icon), so a token never has to be typed into a notebook cell."""
-    if os.environ.get(name):
-        return os.environ[name]
-    try:
-        from kaggle_secrets import UserSecretsClient  # Kaggle
+    """A setting the notebook did not fill in, from the environment (a server's HF_TOKEN).
+    Tokens are typed in the notebook's settings; platform secret stores are not read."""
+    return os.environ.get(name) or None
 
-        return UserSecretsClient().get_secret(name) or None
-    except Exception:
-        pass
-    try:
-        from google.colab import userdata  # Colab
 
-        return userdata.get(name) or None
-    except Exception:
-        return None
+def pull_folder(bucket: str, folder: str, out: str | Path, token: str | None = None) -> Path:
+    """A folder of videos kept in the bucket (``folder`` relative to the bucket's top),
+    downloaded into ``out/<folder>`` (only what changed) so the run can read it."""
+    rel = folder.strip().strip("/")
+    dest = Path(out) / rel
+    print(f"downloading {rel}/ from hf://buckets/{bucket} …", flush=True)
+    Bucket(bucket, Path(out), token).pull(include=[f"{rel}/*"])
+    if not dest.is_dir():
+        raise SystemExit(f"no folder {rel}/ in the bucket {bucket}")
+    return dest
 
 
 class Bucket:

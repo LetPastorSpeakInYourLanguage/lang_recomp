@@ -55,27 +55,28 @@ Your projects, settings and exports are stored in `data/` inside the app folder
 
 ---
 
-## 3. The heavy pipeline on Colab (or any GPU machine)
+## 3. The heavy pipeline: one notebook, anywhere
 
-Transcription, speaker detection, separation, cloned voices and mixing run as a
-**research notebook** you start yourself: **[`colab/lang_bridge.ipynb`](colab/lang_bridge.ipynb)**.
-It is not a background service of the app and picks up nothing on its own: you give it a
-folder of videos (and/or YouTube links) and an output folder; it runs the stages and writes
-a `.lbwork` package the app opens (Home → *Open a shared work*), playing media where they are.
+Transcription, speaker detection, separation, cloned voices and mixing run in a notebook you
+start yourself: **[`notebooks/lang_bridge.ipynb`](notebooks/lang_bridge.ipynb)**. It dubs a
+folder of videos (and/or YouTube links) end to end with no app, and finds out where it runs
+by itself:
 
-Full guide, including how to put the notebook in your own Google Drive:
-**[colab/README.md](colab/README.md)**. In short:
+- **Kaggle**: uses both GPUs of *GPU T4 x2*; keep results with `STORAGE = bucket`.
+- **Colab**: uses its T4; Drive is connected when a setting points into it.
+- **Your own machine** (Jupyter, Python ≥ 3.10): an NVIDIA GPU if there is one, otherwise the
+  CPU; PyTorch and ffmpeg are installed if missing.
 
-1. Open `https://colab.research.google.com/github/LetPastorSpeakInYourLanguage/lang_recomp/blob/main/colab/lang_bridge.ipynb`
-   and *File → Save a copy in Drive* (or upload the file to `My Drive/Colab Notebooks`).
-2. *Runtime → Change runtime type → T4 GPU*; mount Drive yourself if your videos are there.
-3. Fill in the settings (`VIDEOS`, `OUTPUT`, `TARGETS`, your `HF_TOKEN`) and *Run all*.
-   **Never share or commit the notebook with your token filled in.**
+Everything is typed in its **Settings** cell: `STORAGE` (folder or bucket), `VIDEOS`,
+`YOUTUBE`, `LANGUAGE`, `TARGETS`, `OUTPUT`, `BUCKET`, `HF_TOKEN`, `DEVICE` (auto / cpu /
+1 GPU / 2 GPUs). **Never share or commit the notebook with your token filled in.** Full
+guide: **[notebooks/README.md](notebooks/README.md)**.
 
-With **Google Drive for Desktop** (<https://www.google.com/drive/download/>) the output
-folder shows up on your PC (e.g. `G:\My Drive\LangBridge-output`), so the app plays the
-dubs straight from there. The app's Run panel can also *prepare* a run for chosen videos
-(device = a Drive folder): put the printed folder in the notebook's `RUN_FOLDER`.
+The app reads what the notebook wrote. With a bucket, add it under Settings → Folders
+(*HF bucket*) and press Sync. With a folder your PC can see (Drive for Desktop, or this PC),
+add it as a *Results folder*. Its runs show on Home, and their results open by themselves.
+The app's Run panel can also *prepare* a run for chosen videos: put the printed folder in
+the notebook's `RUN_FOLDER`.
 
 On a server: `from lb_worker.research import run_folder` (see `worker/lb_worker/research.py`).
 
@@ -190,7 +191,8 @@ app/        FastAPI backend: projects, jobs, translation, voice, mix/export (SQL
 web/        React + Vite + Tailwind UI
 worker/     lb_worker: the job-folder protocol, the worker loop, and the stages
             (separate, asr, align, diarize, voice, prefetch, tts_bakeoff)
-scripts/    build_notebook.py (writes colab/lang_bridge.ipynb), local_worker.py, watch.py, ...
+notebooks/  lang_bridge.ipynb (Colab, Kaggle, local), e2e_test.ipynb, bench_gpu_identity.ipynb
+scripts/    build_notebook.py (writes notebooks/*.ipynb), local_worker.py, watch.py, ...
 spikes/     research experiments (voice bake-off)
 tests/      unit tests
 ```

@@ -28,10 +28,10 @@ Hard-won lessons: [LESSONS.md](LESSONS.md).
 2. Recurring parts still need a real series with an identical intro (6 Minute English's
    YouTube uploads have varying stings: no shared audio ≥ 3 s, correctly nothing proposed).
 0. **Pivot (2026-09-26): the Colab worker is a research notebook, not a job picker.**
-   `colab/lang_bridge.ipynb` + `worker/lb_worker/research.py` (`run_folder`, `run_manifest`)
+   `notebooks/lang_bridge.ipynb` (was `colab/`) + `worker/lb_worker/research.py` (`run_folder`, `run_manifest`)
    clone the code from GitHub, take a folder/links + `HF_TOKEN` in the settings, and write
    `.lbwork` results the app opens. Drive is mounted by the person. The app only *prepares*
-   runs for Colab folders. `scripts/sync_worker.py` is gone. Guide: `colab/README.md`.
+   runs for Colab folders. `scripts/sync_worker.py` is gone. Guide: `notebooks/README.md`.
 3. ~~**Whole-channel Colab run in progress**~~ (superseded by the pivot above; jobs cancelled) (owner request): all 458 other "6 Minute English"
    videos (~48 h of audio) queued as 23 `bulk` batches of 20 on the Colab job folder; the
    owner runs `lb_worker.ipynb` (Run all) as often as needed — batches resume. Then press
@@ -61,7 +61,7 @@ Hard-won lessons: [LESSONS.md](LESSONS.md).
   4. start the app (`.claude/launch.json` → `api` + `web`, or `python -m app --serve`) and
      check screens in the browser pane (Translate, Voice, Mix with real data)
   5. `python scripts/build_notebook.py` when the notebook cells changed (then commit
-     `colab/lang_bridge.ipynb`); Colab gets new worker code from GitHub on its next run
+     `notebooks/*.ipynb`); notebooks get new worker code from GitHub on its next run
 - Commit messages end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 
 ---

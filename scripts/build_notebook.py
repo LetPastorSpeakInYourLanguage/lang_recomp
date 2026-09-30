@@ -1,8 +1,11 @@
-"""Write colab/lang_bridge.ipynb — the research notebook (run the pipeline by hand on a GPU).
+"""Write the notebooks in notebooks/ — they run anywhere: Colab (one T4), Kaggle (two T4s),
+a local Jupyter or a server (CPU or NVIDIA GPU).
 
     python scripts/build_notebook.py
 
-Edit the cells here, not in the .ipynb, so the notebook stays reviewable in git.
+Edit the cells here, not in the .ipynb files, so the notebooks stay reviewable in git.
+Every notebook takes its token and bucket from its settings cell (never from platform
+secrets) and finds the code with the same first cell (GET_CODE).
 """
 from __future__ import annotations
 
@@ -11,7 +14,11 @@ from pathlib import Path
 
 REPO = "https://github.com/LetPastorSpeakInYourLanguage/lang_recomp"
 BRANCH = "main"  # the branch the notebooks download
-OUT = Path(__file__).resolve().parents[1] / "colab" / "lang_bridge.ipynb"
+DIR = Path(__file__).resolve().parents[1] / "notebooks"
+OUT = DIR / "lang_bridge.ipynb"
+E2E_OUT = DIR / "e2e_test.ipynb"
+BENCH_OUT = DIR / "bench_gpu_identity.ipynb"
+RAW = "https://raw.githubusercontent.com/LetPastorSpeakInYourLanguage/lang_recomp/main/notebooks"
 
 
 def cell(kind: str, src: str, form: bool = False) -> dict:
@@ -22,91 +29,152 @@ def cell(kind: str, src: str, form: bool = False) -> dict:
     return c
 
 
+# The machine settings every notebook shares (appended to its settings cell).
+MACHINE = """
+HF_TOKEN = ""  #@param {type:"string"}
+#@markdown Your [Hugging Face token](https://huggingface.co/settings/tokens) (write access if you use a bucket). **Never share or commit this notebook with a token filled in.**
+DEVICE = "auto"  #@param ["auto", "cpu", "1 GPU", "2 GPUs"]
+#@markdown `auto`: every GPU there is (Kaggle T4 x2 → 2, Colab T4 → 1), else the CPU.
+WORK_DIR = ""  #@param {type:"string"}
+#@markdown Code, models and scratch files. Empty: `/kaggle/working`, `/content`, or `~/lang-bridge` on your own machine.
+CODE_BRANCH = "%s"  #@param {type:"string"}
+""" % BRANCH
+
+# Finds the runtime and the code. It cannot import Lang-Bridge yet, so it detects the
+# runtime with the same rules as lb_worker.env.runtime().
+GET_CODE = f"""
+#@title Get Lang-Bridge
+import importlib.util, io, os, shutil, subprocess, sys, urllib.request, zipfile
+from pathlib import Path
+
+def _runtime():
+    if os.environ.get('KAGGLE_KERNEL_RUN_TYPE'):
+        return 'kaggle'
+    try:
+        if importlib.util.find_spec('google.colab'):
+            return 'colab'
+    except (ImportError, ValueError):
+        pass
+    return 'local'
+
+RUNTIME = _runtime()
+ROOT = Path(WORK_DIR).expanduser() if WORK_DIR.strip() else Path({{'kaggle': '/kaggle/working', 'colab': '/content'}}.get(RUNTIME) or Path.home() / 'lang-bridge')
+ROOT.mkdir(parents=True, exist_ok=True)
+BRANCH = CODE_BRANCH.strip() or '{BRANCH}'
+# On your own machine, a notebook opened from inside a Lang-Bridge checkout uses that checkout.
+_here = next((p for p in (Path.cwd(), *Path.cwd().parents) if (p / 'worker' / 'lb_worker').is_dir() and (p / 'app').is_dir()), None)
+if RUNTIME == 'local' and _here:
+    CODE = _here  # as it is, on whatever branch it has checked out (CODE_BRANCH is not used)
+    BRANCH = subprocess.run(['git', '-C', str(CODE), 'rev-parse', '--abbrev-ref', 'HEAD'], capture_output=True, text=True).stdout.strip() or 'checkout'
+else:
+    CODE = ROOT / 'lang_recomp'
+    if shutil.which('git'):
+        if not (CODE / '.git').exists():
+            shutil.rmtree(CODE, ignore_errors=True)
+            subprocess.run(['git', 'clone', '-q', '--depth', '1', '-b', BRANCH, '{REPO}', str(CODE)], check=True)
+        else:
+            subprocess.run(['git', '-C', str(CODE), 'fetch', '-q', '--depth', '1', 'origin', BRANCH], check=True)
+            subprocess.run(['git', '-C', str(CODE), 'checkout', '-q', '-f', '-B', BRANCH, 'FETCH_HEAD'], check=True)
+    else:  # no git on this machine: the branch as a zip
+        shutil.rmtree(CODE, ignore_errors=True)
+        with urllib.request.urlopen('{REPO}/archive/refs/heads/' + BRANCH + '.zip') as r:
+            zipfile.ZipFile(io.BytesIO(r.read())).extractall(ROOT)
+        next(p for p in ROOT.glob('lang_recomp-*') if p.is_dir()).rename(CODE)
+sys.path[:0] = [str(CODE), str(CODE / 'worker')]
+_v = subprocess.run(['git', '-C', str(CODE), 'log', '-1', '--format=%h (%cd)'], capture_output=True, text=True).stdout.strip() if (CODE / '.git').exists() else 'zip'
+print(f'Lang-Bridge {{BRANCH}} {{_v}} in {{CODE}} · running on {{RUNTIME}}')
+"""
+
+INTRO = f"""
+## Where it runs
+
+| | Before **Run all** |
+|---|---|
+| **Kaggle** | Import this notebook (File → Import notebook → Link: `{RAW}/lang_bridge.ipynb`); Settings → Accelerator **GPU T4 x2** (both are used), Internet **on** (phone-verified account). Use `STORAGE = bucket` to keep results. |
+| **Colab** | Runtime → Change runtime type → **T4 GPU**. Drive is connected by itself when a setting points into `/content/drive/…`. |
+| **Your own machine** | Jupyter with Python ≥ 3.10 (a fresh virtual environment is best). An NVIDIA GPU is used if there is one, otherwise the CPU (fine for transcripts, slow for voices). PyTorch and ffmpeg are installed if missing. |
+
+Everything is set in the **Settings** cell, the token and bucket included.
+"""
+
 CELLS = [
     cell("markdown", f"""
-# Lang-Bridge — dub videos on a GPU
+# Lang-Bridge — dub a folder of videos
 
-Runs the Lang-Bridge pipeline: **fetch → transcribe → translate → voice → mix**, on a
-folder of videos and/or YouTube links, from any source language into any target language.
-Open the results in the Lang-Bridge app to check, fix and listen.
-
-**Colab**: Runtime → Change runtime type → T4 GPU; mount Drive yourself if your videos are there.
-**Kaggle**: Settings → Accelerator **GPU T4 ×2**, Internet **on**.
-
-Your Hugging Face token: add it once as a secret named `HF_TOKEN` (Colab: the key icon on
-the left; Kaggle: Add-ons → Secrets) and leave the setting below empty. Then fill in the
-settings and **Run all**. Safe to stop at any time: see RUN_FOLDER to continue.
-Guide: [{REPO}/tree/main/colab]({REPO}/tree/main/colab)
+Runs the whole pipeline — **fetch → transcribe → translate → voice → mix** — on a folder of
+videos and/or YouTube links, from any language into any languages, with no app needed.
+The Lang-Bridge app can open the results to check, fix and listen.
+{INTRO}
+Safe to stop at any time: run again with the same settings to continue (or see RUN_FOLDER).
+Guide: [{REPO}/tree/main/notebooks]({REPO}/tree/main/notebooks)
 """),
     cell("code", """
 #@title Settings
+STORAGE = "folder"  #@param ["folder", "bucket"]
+#@markdown `folder`: results go to OUTPUT. `bucket`: results are pushed to BUCKET after every stage (the app syncs them), and VIDEOS may be a folder inside the bucket.
 VIDEOS = ""  #@param {type:"string"}
-#@markdown A folder of videos (subfolders are works; `name.srt` beside a video is used instead of transcribing).
+#@markdown A folder of videos (subfolders are works; `name.srt` beside a video is used instead of transcribing). With STORAGE = bucket, a folder in the bucket (e.g. `videos/sermons`).
 YOUTUBE = ""  #@param {type:"string"}
 #@markdown YouTube video or playlist links, separated by spaces.
 LANGUAGE = "en"  #@param {type:"string"}
 #@markdown The videos' language (e.g. `en`, `tr`, `am`).
 TARGETS = "am"  #@param {type:"string"}
 #@markdown Languages to dub into, e.g. `am om ti` or `en`.
-ASR_MODELS = "am=badrex/Ethio-ASR-amharic"  #@param {type:"string"}
-#@markdown A speech recogniser per source language from Hugging Face (`lang=repo`, space separated). Languages not named use Whisper large-v3.
-ALIGNERS = ""  #@param {type:"string"}
-#@markdown Word aligners per language (`lang=repo`), over the built-in ones for ~27 languages.
+OUTPUT = ""  #@param {type:"string"}
+#@markdown STORAGE = folder: where results go (a Drive folder on Colab, any folder on your machine). Empty: `lb-out` in WORK_DIR.
+BUCKET = ""  #@param {type:"string"}
+#@markdown A Hugging Face bucket, `namespace/name`. Needed for STORAGE = bucket; with STORAGE = folder it is a backup the results are also pushed to.
 STAGES = "fetch transcribe translate voice mix"  #@param {type:"string"}
 #@markdown Which stages: e.g. `fetch transcribe` for transcripts only.
 DUB_LIMIT = 0  #@param {type:"integer"}
 #@markdown Voice and mix only the first N videos (0 = all). The rest are transcribed and translated.
 LIMIT = 0  #@param {type:"integer"}
 #@markdown Work on only the first N videos (0 = all).
-OUTPUT = ""  #@param {type:"string"}
-#@markdown Where results go. Empty: this machine's disk (`/kaggle/working/lb-out` or `/content/lb-out`); or a Drive folder.
-BUCKET = ""  #@param {type:"string"}
-#@markdown A Hugging Face bucket (`namespace/name`) to push results to after every stage; the app pulls it from there. Empty: the `LB_BUCKET` secret, if set.
+ASR_MODELS = "am=badrex/Ethio-ASR-amharic"  #@param {type:"string"}
+#@markdown A speech recogniser per source language from Hugging Face (`lang=repo`, space separated). Languages not named use Whisper large-v3.
+ALIGNERS = ""  #@param {type:"string"}
+#@markdown Word aligners per language (`lang=repo`), over the built-in ones for ~27 languages.
 CAPTIONS = 0  #@param {type:"integer"}
 ALIGN_CAPTIONS = 0  #@param {type:"integer"}
 #@markdown YouTube only: also take YouTube's captions for the first N videos, force-align the first M, and compare with Whisper.
 RUN_FOLDER = ""  #@param {type:"string"}
-#@markdown Continue a run: its folder (`…/runs/<run>`, from the app or a stopped run). With BUCKET set it is pulled from the bucket first. Settings above are then ignored.
-HF_TOKEN = ""  #@param {type:"string"}
-#@markdown Leave empty to use the `HF_TOKEN` secret. **Never share or commit this notebook with a token filled in.**
-"""),
-    cell("code", f"""
-#@title Get Lang-Bridge
-import os, subprocess, sys
-KAGGLE = bool(os.environ.get('KAGGLE_KERNEL_RUN_TYPE'))
-HOME = '/kaggle/working' if KAGGLE else '/content'
-CODE = HOME + '/lang_recomp'
-if not os.path.exists(CODE):
-    subprocess.run(['git', 'clone', '-q', '--depth', '1', '-b', '{BRANCH}', '{REPO}', CODE], check=True)
-else:
-    subprocess.run(['git', '-C', CODE, 'pull', '-q'], check=False)
-sys.path[:0] = [CODE, CODE + '/worker']
-print(subprocess.run(['git', '-C', CODE, 'log', '-1', '--format=Lang-Bridge %h (%cd)'], capture_output=True, text=True).stdout)
-# the stages install what they need (Whisper, pyannote, the separator, OmniVoice) the first time they run
+#@markdown Continue a run: its folder (`…/runs/<run>`; with STORAGE = bucket, `runs/<run>`). Settings above are then ignored.
+""" + MACHINE),
+    cell("code", GET_CODE, form=True),
+    cell("code", """
+#@title Set up this machine
+from lb_worker import env
+M = env.setup(RUNTIME, ROOT, DEVICE, STORAGE, OUTPUT, BUCKET, HF_TOKEN, paths=(VIDEOS, RUN_FOLDER))
 """, form=True),
     cell("code", """
 #@title Run
-from lb_worker.research import run_folder, run_manifest, secret
+from lb_worker.research import pull_folder, run_folder, run_manifest
 
 pairs = lambda text: dict(p.split('=', 1) for p in text.split() if '=' in p)
-out = OUTPUT.strip() or HOME + '/lb-out'
-bucket = BUCKET.strip() or secret('LB_BUCKET')  # or set it once as a secret named LB_BUCKET
+videos = VIDEOS.strip() or None
+in_bucket = lambda p: M['storage'] == 'bucket' and not os.path.isabs(p)
+if videos and in_bucket(videos):
+    videos = str(pull_folder(M['bucket'], videos, M['out'], M['token']))
 if RUN_FOLDER.strip():
-    result = run_manifest(RUN_FOLDER.strip(), hf_token=HF_TOKEN or None, bucket=bucket)
+    folder = M['out'] / RUN_FOLDER.strip() if in_bucket(RUN_FOLDER.strip()) else RUN_FOLDER.strip()
+    result = run_manifest(folder, hf_token=M['token'], bucket=M['bucket'])
 else:
-    result = run_folder(VIDEOS.strip() or None, out, LANGUAGE.strip(), TARGETS.split(), STAGES.split(),
+    result = run_folder(videos, M['out'], LANGUAGE.strip(), TARGETS.split(), STAGES.split(),
                         youtube=YOUTUBE.split() or None, dub_limit=DUB_LIMIT or None, limit=LIMIT or None,
-                        captions=CAPTIONS, align_captions=ALIGN_CAPTIONS, hf_token=HF_TOKEN or None,
-                        asr_models=pairs(ASR_MODELS), aligners=pairs(ALIGNERS), bucket=bucket)
+                        captions=CAPTIONS, align_captions=ALIGN_CAPTIONS, hf_token=M['token'],
+                        asr_models=pairs(ASR_MODELS), aligners=pairs(ALIGNERS), bucket=M['bucket'],
+                        options=M['options'])
 """, form=True),
     cell("markdown", """
 ## Look at the results
 
-- With **BUCKET**: in the Lang-Bridge app, add the bucket as a device (Settings → Folders →
-  Hugging Face bucket), then **Sync**: the run's progress shows as it goes, and **Open
-  results** brings the work in; the dubs play from the synced folder.
-- With **OUTPUT on Drive**: Home → **Open a shared work**, and give the `.lbwork` path printed
-  above as your PC sees it (e.g. `G:/My Drive/…/results/….lbwork`).
+- **Without the app**: the dubbed videos are in `library/<work>/<video>/export/` under the
+  results folder (OUTPUT, or the bucket).
+- **With a bucket**: in the Lang-Bridge app, Settings → Folders → add one of kind
+  **Hugging Face bucket**, then **Sync**; the run's progress shows as it goes and its results
+  open by themselves.
+- **With a folder the app can see** (Drive for Desktop, or this PC): Settings → Folders → add
+  it as a **results folder**; its runs appear under Home → Runs.
 
 Done with the GPU? Colab: **Runtime → Disconnect and delete runtime**; Kaggle: **Stop session**.
 """),
@@ -118,7 +186,31 @@ SIX_MINUTE = ["https://www.youtube.com/watch?v=xwseWCSXD3Y", "https://www.youtub
 SIX_MINUTE_OTHERS = ["https://www.youtube.com/watch?v=MSJMJxd1udk", "https://www.youtube.com/watch?v=hb1CBEENiPQ",
                      "https://www.youtube.com/watch?v=vxoPApiNZBU", "https://www.youtube.com/watch?v=-idY8F7LOSE",
                      "https://www.youtube.com/watch?v=m7IlyBEyi3c"]
-BENCH_OUT = Path(__file__).resolve().parents[1] / "colab" / "bench_gpu_identity.ipynb"
+
+E2E = [
+    cell("markdown", f"""
+# Lang-Bridge end-to-end test: two videos → Hugging Face bucket → the app
+
+Two 6 Minute English episodes (Neil and a co-host), English → Amharic, every stage, results
+pushed to your bucket after each stage. Fill in `HF_TOKEN` (can write to the bucket) and
+`BUCKET` (e.g. `you/lang-bridge-runs`) below, then **Run all**, and follow it in the app
+(Home → Runs on …).
+{INTRO}"""),
+    cell("code", """
+#@title Settings
+BUCKET = ""  #@param {type:"string"}
+#@markdown Your Hugging Face bucket, `namespace/name`.
+""" + MACHINE),
+    cell("code", GET_CODE, form=True),
+    cell("code", f"""
+#@title Run the test
+from lb_worker import env
+from lb_worker.research import run_folder
+M = env.setup(RUNTIME, ROOT, DEVICE, 'bucket', '', BUCKET, HF_TOKEN)
+result = run_folder(None, M['out'], 'en', ['am'], name='E2E test', youtube={json.dumps(SIX_MINUTE[:2])},
+                    bucket=M['bucket'], hf_token=M['token'], options=M['options'])
+""", form=True),
+]
 
 BENCH = [
     cell("markdown", f"""
@@ -131,10 +223,9 @@ Measures, before we build (plan: `docs/SCALE_PLAN.md`, Phase A):
 - **E2**: whether the same video is recognised across copies, re-downloads, formats,
   trims and added intros, and never confused with other episodes.
 
-Works on **Colab** (Runtime → Change runtime type → T4 GPU) and **Kaggle** (File → Import
-notebook → this file's GitHub link; Settings → Accelerator **GPU T4 x2**, Internet **on**).
-Then **Run all** (about an hour on a T4). Paste the last cell's output back.
-"""),
+Runs on Colab, Kaggle or your own GPU machine (see below). **Run all** (about an hour on a
+T4). Paste the last cell's output back.
+{INTRO}"""),
     cell("code", f"""
 #@title Settings
 SOURCES = {json.dumps(" ".join(SIX_MINUTE))}  #@param {{type:"string"}}
@@ -148,23 +239,14 @@ RUN_SEPARATION = True  #@param {{type:"boolean"}}
 RUN_WHISPER = True  #@param {{type:"boolean"}}
 RUN_OMNIVOICE = True  #@param {{type:"boolean"}}
 RUN_IDENTITY = True  #@param {{type:"boolean"}}
-import os
-KAGGLE = bool(os.environ.get("KAGGLE_KERNEL_RUN_TYPE"))  # (Colab also has a /kaggle folder)
-OUT = "/kaggle/working/lb-bench" if KAGGLE else "/content/lb-bench"
-#@markdown Results go to `OUT` (`/content/lb-bench` on Colab, `/kaggle/working/lb-bench` on Kaggle).
-"""),
-    cell("code", f"""
-#@title Get Lang-Bridge (branch {BRANCH})
-import os, subprocess, sys
-CODE = '/kaggle/working/lang_recomp' if KAGGLE else '/content/lang_recomp'
-if not os.path.exists(CODE):
-    subprocess.run(['git', 'clone', '-q', '--depth', '1', '-b', '{BRANCH}', '{REPO}', CODE], check=True)
-else:
-    subprocess.run(['git', '-C', CODE, 'pull', '-q'], check=False)
-sys.path[:0] = [CODE, CODE + '/worker']
+""" + MACHINE),
+    cell("code", GET_CODE, form=True),
+    cell("code", """
+#@title Set up this machine
+from lb_worker import env
+M = env.setup(RUNTIME, ROOT, DEVICE, 'folder', str(ROOT / 'lb-bench'), '', HF_TOKEN)
+OUT = str(M['out'])  # results: lb-bench in WORK_DIR
 os.environ.setdefault('LB_CACHE', OUT + '/cache')
-print(subprocess.run(['git', '-C', CODE, 'log', '-1', '--format=Lang-Bridge %h (%cd)'], capture_output=True, text=True).stdout)
-subprocess.run(['nvidia-smi', '--query-gpu=name,memory.total', '--format=csv'])
 """, form=True),
     cell("code", """
 #@title E1 · separation settings and the Opus copy
@@ -221,36 +303,6 @@ print(json.dumps(summary, ensure_ascii=False))
 ]
 
 
-E2E_OUT = Path(__file__).resolve().parents[1] / "colab" / "e2e_test.ipynb"
-E2E = [
-    cell("markdown", """
-# Lang-Bridge end-to-end test: two videos → Hugging Face bucket → the app
-
-Two 6 Minute English episodes (Neil and a co-host), English → Amharic, every stage, results
-pushed to your bucket after each stage. Needs two secrets (Kaggle: Add-ons → Secrets; Colab:
-the key icon): `HF_TOKEN` (can write to the bucket) and `LB_BUCKET` (e.g. `you/lang-bridge-runs`).
-Kaggle: Accelerator **GPU T4 ×2**, Internet **on**. Then **Run all**, and follow it in the app
-(Home → Runs on …).
-"""),
-    cell("code", f"""
-import os, subprocess, sys
-HOME = '/kaggle/working' if os.environ.get('KAGGLE_KERNEL_RUN_TYPE') else '/content'
-CODE = HOME + '/lang_recomp'
-if not os.path.exists(CODE):
-    subprocess.run(['git', 'clone', '-q', '--depth', '1', '-b', '{BRANCH}', '{REPO}', CODE], check=True)
-else:
-    subprocess.run(['git', '-C', CODE, 'pull', '-q'], check=False)
-sys.path[:0] = [CODE, CODE + '/worker']
-print(subprocess.run(['git', '-C', CODE, 'log', '-1', '--format=Lang-Bridge %h (%cd)'], capture_output=True, text=True).stdout)
-from lb_worker.research import run_folder, secret
-bucket = secret('LB_BUCKET')
-assert secret('HF_TOKEN') and bucket, 'add the HF_TOKEN and LB_BUCKET secrets first'
-result = run_folder(None, HOME + '/lb-out', 'en', ['am'], name='E2E test',
-                    youtube={json.dumps(SIX_MINUTE[:2])}, bucket=bucket)
-"""),
-]
-
-
 def write(path: Path, cells: list[dict]) -> None:
     path.parent.mkdir(exist_ok=True)
     nb = {"nbformat": 4, "nbformat_minor": 0, "cells": cells,
@@ -260,10 +312,12 @@ def write(path: Path, cells: list[dict]) -> None:
     print("wrote", path)
 
 
+NOTEBOOKS = {OUT: CELLS, E2E_OUT: E2E, BENCH_OUT: BENCH}
+
+
 def main() -> None:
-    write(OUT, CELLS)
-    write(BENCH_OUT, BENCH)
-    write(E2E_OUT, E2E)
+    for path, cells in NOTEBOOKS.items():
+        write(path, cells)
 
 
 if __name__ == "__main__":
