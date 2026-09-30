@@ -14,6 +14,7 @@ local disks); then teams working on shared metadata with distributed compute.*
 
 | Tag | Plan | Doc | State |
 |---|---|---|---|
+| WS | Notebook = the worker, folder = the contract, app refines (approved 2026-09-30; supersedes SCALE Phase B) | [WORKSPACE_PLAN.md](WORKSPACE_PLAN.md) | **P0: notebooks anywhere (Phase 3 first)** |
 | SCALE | Decoupled notebooks ↔ app through a workspace folder, one Supabase, HF buckets, media identity, translation loop (branch `exp/scale`) | [SCALE_DESIGN.md](SCALE_DESIGN.md) (+ [research](SCALE_RESEARCH.md)) | **design; certification experiments E1–E6 next, then the build plan** |
 | TEAM | Team hub: shared metadata, media on everyone's devices, distributed compute | [TEAM.md](TEAM.md) | approved, not started | — hub mode on the coordinator's PC may be replaced by SCALE §2
 | LIB | Library folders (Drive + local disks), folder standard | [LIBRARY_FOLDERS.md](LIBRARY_FOLDERS.md), `app/libraries.py` | built, not yet used on real folders |
@@ -25,6 +26,16 @@ local disks); then teams working on shared metadata with distributed compute.*
 | V2 | Original v2 plan: phases A6–A7, B, C, D, E | [PLAN.md](PLAN.md) | A1–A5 done |
 
 ## P0 — to hear the first Colab-made dubs
+
+- [ ] **WS P3** Notebooks re-created under `notebooks/`, running anywhere: Kaggle (2 × T4 detected), Colab (1 × T4), local Jupyter; `HF_TOKEN`/`BUCKET`/DEVICE/STORAGE in the settings cell (no platform secrets); app opens plain result folders.
+- [ ] **WS P0** Decisions 35–44, plan in the repo (this commit), SCALE_DESIGN/SCALE_PLAN notes.
+- [ ] **WS P1** `lb_core/`: pure logic out of `app/` (no behaviour change).
+- [ ] **WS P2** Workspace protocol v1 (`lb_core/workspace/`): schema, identity uids, config conflicts, manual over auto, hashes/staleness, tasks, ownership.
+- [ ] **WS P4** Pipeline on the workspace (stale-only, hash-named takes, dubs/ output); retire the job queue and old stages.
+- [ ] **WS P5** E3 bench, then Gemma chapters + translation loop (source and target options).
+- [ ] **WS P6** App on workspaces: ingest cache, write-through `manual/`, board, tasks, preview gate, bucket push of app-owned paths.
+- [ ] **WS P7** Supabase central metadata (devices, mounts, media copies, sync by revision, cross-team reuse).
+- [ ] **WS P8** Migrate existing works, retire old code, acceptance 1–7, merge.
 
 - [x] **RUN** Rewrite the Colab notebook: plain wording (no "polling jobs"): connect Drive → set up → *Run what the app sent* (one cell, readable progress) → release GPU. (`scripts/sync_worker.py`)
 - [x] **RUN** Publish `app/` to Drive with the worker (`sync_worker.py`), so the runner can import it on Colab (`root/worker/app`).

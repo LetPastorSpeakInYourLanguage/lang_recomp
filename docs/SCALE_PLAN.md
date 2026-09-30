@@ -74,7 +74,10 @@ on Colab / Kaggle and pastes the printed summary. Each experiment has a pass rul
 
 Output: `docs/CERTIFICATION.md` with numbers and decisions; then the owner approves Phase B.
 
-## Phase B — build (each milestone: code + tests + a demo the owner can run)
+## Phase B — build
+
+> **Superseded (2026-09-30)** by [WORKSPACE_PLAN.md](WORKSPACE_PLAN.md) (notebook runs anywhere,
+> app works only with folders, job queue retired, Supabase with devices and folders). (each milestone: code + tests + a demo the owner can run)
 
 **M1 Workspace protocol** — new `app/workspace/` (used by app and notebook):
 file formats (versioned JSON schemas) for `media.json`, `auto/*`, `manual/*`, `stage.json`,

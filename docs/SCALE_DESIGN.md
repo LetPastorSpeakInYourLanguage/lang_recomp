@@ -60,6 +60,9 @@ Rules that make it work:
 
 ## 2. The workspace protocol
 
+> Revised layout (format v1, single writer per path, content-derived uids, tasks with leases):
+> [WORKSPACE_PLAN.md](WORKSPACE_PLAN.md#the-workspace-format-v1). It wins where the two differ.
+
 ```
 <workspace>/
   workspace.json              team, source language, target languages, defaults (app writes; notebook reads)
@@ -202,6 +205,9 @@ stays in the loop as a baseline translator and as the back-translator. A hosted 
 wins clearly it could become an opt-in step with a team's own key, never a requirement.
 
 ## 6. The notebook
+
+> Revised (2026-09-30): one notebook for Colab, Kaggle and local Jupyter; secrets, DEVICE and
+> STORAGE (folder / bucket) in its settings cell. See [WORKSPACE_PLAN.md](WORKSPACE_PLAN.md) Phase 3.
 
 One notebook, three ways in, same pipeline:
 

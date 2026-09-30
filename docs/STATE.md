@@ -5,7 +5,7 @@ The working memory of this project. Read this first when picking the work up.
 Plan: [PLAN.md](PLAN.md). Decisions and why: [DECISIONS.md](DECISIONS.md).
 Hard-won lessons: [LESSONS.md](LESSONS.md).
 
-**Last updated:** 2026-09-26
+**Last updated:** 2026-09-30 — **new plan approved: [WORKSPACE_PLAN.md](WORKSPACE_PLAN.md)** (branch `feat/workspace`); first step: notebooks under `notebooks/` that run anywhere.
 
 ---
 
