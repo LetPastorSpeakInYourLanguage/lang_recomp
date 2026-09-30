@@ -46,6 +46,9 @@ def team_a(tmp_path, monkeypatch):
         chapters.toggle(p["id"], 2)
         project.set_translation(p["id"], 1, "am", "ሰላም፣ ይህ ስድስት ደቂቃ ነው።", provenance="human")
         project.set_translation(p["id"], 2, "am", "ዛሬ ስለ ተስፋ እንነጋገራለን።", provenance="machine", locked=False)
+        project.set_options(p["id"], "am", 2, [  # a line that was too long, and its shorter version
+            {"kind": "google", "text": "ዛሬ ስለ ተስፋ እንነጋገራለን።", "source_text": "Today we talk about hope.", "need": 1.4, "sim": 1.0},
+            {"kind": "short_a", "text": "ዛሬ ስለ ተስፋ።", "source_text": "Today: hope.", "need": 1.0, "sim": 0.8, "basis": "b1"}])
     ids = [x["id"] for x in series.sources(s["id"])]
     banks.rebuild(host)
     intro = library.create_clip(ids[0], 1, 4, "Opening", "intro")
@@ -81,6 +84,8 @@ def _snapshot():
         "clips": sorted((r["uid"], r["title"], r["kind"], src_uid[r["source_id"]]) for r in db.rows("SELECT * FROM clips")),
         "occurrences": sorted((src_uid[r["source_id"]], r["start"], r["status"]) for r in db.rows("SELECT * FROM clip_occurrences")),
         "collections": sorted(r["uid"] for r in db.rows("SELECT * FROM collections")),
+        "options": sorted((src_uid[r["project_id"]], r["sentence_id"], r["lang"], r["k"], r["kind"], r["text"], r["source_text"],
+                           r["need"], r["sim"], r["basis"]) for r in db.rows("SELECT * FROM translation_options")),
         "translations": sorted((src_uid[r["project_id"]], r["sentence_id"], r["lang"], r["text"], r["provenance"])
                                for r in db.rows("SELECT * FROM translations")),
     }

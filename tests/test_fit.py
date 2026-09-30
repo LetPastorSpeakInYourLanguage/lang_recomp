@@ -88,3 +88,14 @@ def test_lines_carry_their_fit(fresh):
     assert s[1]["fit"]["tight"] and s[1]["fit"]["need"] > 1.25
     assert s[2]["fit"] is None
     assert not s[3]["fit"]["tight"]
+
+
+def test_shorter_versions_show_until_the_line_is_edited(fresh):
+    db.run("INSERT INTO projects (id,name,created,tgt_lang,duration) VALUES ('p','p',?,'am',10)", time.time())
+    db.run("INSERT INTO sentences (project_id,id,speaker,start,end,text) VALUES ('p',1,'A',0,1,'Hello there.')")
+    project.set_options("p", "am", 1, [{"kind": "google", "text": "ሰላም እዚያ።", "source_text": "Hello there.", "need": 1.3, "sim": 1.0},
+                                       {"kind": "short_a", "text": "ሰላም።", "source_text": "Hello.", "need": 0.8, "sim": 0.9}])
+    (s,) = project.sentences("p", "am")
+    assert [o["kind"] for o in s["options"]] == ["google", "short_a"] and s["options"][1]["sim"] == 0.9
+    db.run("UPDATE sentences SET text='Hi there, friend.' WHERE project_id='p' AND id=1")
+    assert project.sentences("p", "am")[0]["options"] == []

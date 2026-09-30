@@ -151,6 +151,10 @@ def export(sid: str, langs: list[str] | None = None, media: str = "opus", takes:
             put(f"languages/{lang}/translations.json", {
                 p["uid"]: db.rows("SELECT sentence_id AS line_id, text, locked, provenance FROM translations"
                                   " WHERE project_id=? AND lang=? AND text<>''", p["id"], lang) for p in srcs})
+            put(f"languages/{lang}/options.json", {  # shorter versions of lines too long to fit
+                p["uid"]: db.rows("SELECT sentence_id AS line_id, kind, text, source_text, need, sim, basis"
+                                  " FROM translation_options WHERE project_id=? AND lang=? ORDER BY sentence_id, k",
+                                  p["id"], lang) for p in srcs})
             put(f"languages/{lang}/profile.json", {
                 "aligner": settings.aligner(lang),
                 "rates": {p["uid"]: (json.loads(p["meta"] or "{}").get("rates") or {}).get(lang) for p in srcs}})
@@ -471,6 +475,14 @@ def _import_language(z: zipfile.ZipFile, lang: str, pid_of: dict[str, str], rep:
                    " provenance=excluded.provenance, updated=excluded.updated",
                    pid, t["line_id"], lang, t["text"], t["locked"], t["provenance"], time.time())
             r["written"] += 1
+    if f"languages/{lang}/options.json" in z.namelist():  # packages from before shortening have none
+        for suid, rows in json.loads(z.read(f"languages/{lang}/options.json")).items():
+            pid = pid_of.get(suid)
+            by: dict[int, list[dict]] = {}
+            for o in rows:
+                by.setdefault(o.pop("line_id"), []).append(o)
+            for sid, opts in by.items() if pid else ():
+                project.set_options(pid, lang, sid, opts)
     prof = json.loads(z.read(f"languages/{lang}/profile.json"))
     for suid, rate in (prof.get("rates") or {}).items():
         pid = pid_of.get(suid)

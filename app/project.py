@@ -542,8 +542,29 @@ def sentences(pid: str, lang: str | None = None) -> list[dict]:
         s["budget"] = budget(s["tr"], s["slot_s"], r, lang) if s["tr"] else None
     # how the translation fits the line's window (neighbours included), before voicing
     total = (db.row("SELECT duration FROM projects WHERE id=?", pid) or {}).get("duration")
+    opts = options(pid, lang)
     for s, f in zip(out, fitting.of_lines(out, lang, fitting.rate_for(lang, r), total)):
         s["fit"] = f
+        o = opts.get(s["id"], [])
+        # versions made from other English than the line's own are stale (the line was edited)
+        s["options"] = o if o and o[0]["source_text"] == s["text"] else []
+    return out
+
+
+def set_options(pid: str, lang: str, sid: int, rows: list[dict]) -> None:
+    """Replace a line's shorter versions; the first row is Google's own translation."""
+    db.run("DELETE FROM translation_options WHERE project_id=? AND sentence_id=? AND lang=?", pid, sid, lang)
+    db.many("INSERT INTO translation_options (project_id,sentence_id,lang,k,kind,text,source_text,need,sim,basis,created)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            [(pid, sid, lang, k, r["kind"], r["text"], r["source_text"], r.get("need"), r.get("sim"), r.get("basis"),
+              time.time()) for k, r in enumerate(rows)])
+
+
+def options(pid: str, lang: str) -> dict[int, list[dict]]:
+    out: dict[int, list[dict]] = {}
+    for r in db.rows("SELECT sentence_id, kind, text, source_text, need, sim, basis FROM translation_options"
+                     " WHERE project_id=? AND lang=? ORDER BY sentence_id, k", pid, lang):
+        out.setdefault(r.pop("sentence_id"), []).append(r)
     return out
 
 
@@ -595,6 +616,7 @@ def merge_next(pid: str, sid: int) -> dict:
     a, b = rows[i], rows[i + 1]
     speaker = a["speaker"] if (a["end"] - a["start"]) >= (b["end"] - b["start"]) else b["speaker"]
     db.run("DELETE FROM translations WHERE project_id=? AND sentence_id IN (?,?)", pid, a["id"], b["id"])
+    db.run("DELETE FROM translation_options WHERE project_id=? AND sentence_id IN (?,?)", pid, a["id"], b["id"])
     db.run("UPDATE sentences SET speaker=?, end=?, text=?, words=?, reviewed=0"
            " WHERE project_id=? AND id=?", speaker, max(a["end"], b["end"]),
            f"{a['text'].rstrip()} {b['text'].lstrip()}".strip(),
@@ -624,6 +646,7 @@ def split(pid: str, sid: int, word_index: int) -> dict:
         w1, w2 = [], []
     new_id = (db.row("SELECT MAX(id) m FROM sentences WHERE project_id=?", pid)["m"] or 0) + 1
     db.run("DELETE FROM translations WHERE project_id=? AND sentence_id=?", pid, sid)
+    db.run("DELETE FROM translation_options WHERE project_id=? AND sentence_id=?", pid, sid)
     db.run("UPDATE sentences SET end=?, text=?, words=?, reviewed=0"
            " WHERE project_id=? AND id=?", cut_end, " ".join(tokens[:word_index]), json.dumps(w1), pid, sid)
     db.run("INSERT INTO sentences (project_id,id,speaker,start,end,text,words) VALUES (?,?,?,?,?,?,?)",

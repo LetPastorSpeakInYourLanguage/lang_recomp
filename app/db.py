@@ -105,6 +105,14 @@ CREATE TABLE IF NOT EXISTS libraries (
   id TEXT PRIMARY KEY, uid TEXT, name TEXT NOT NULL, root_id TEXT, path TEXT, src_lang TEXT DEFAULT 'en',
   targets TEXT DEFAULT '["am"]', kind TEXT DEFAULT 'speaker', created REAL, scanned REAL
 );
+-- Versions of a line whose translation was too long for its place (worker/lb_worker/shorten.py):
+-- Google's own ('google') and Google's translation of shorter English ('short_a', 'short_b').
+-- source_text is the English each came from; need its fit, sim how much meaning it kept;
+-- basis identifies what they were made from, so a run that restarts skips them.
+CREATE TABLE IF NOT EXISTS translation_options (
+  project_id TEXT, sentence_id INTEGER, lang TEXT, k INTEGER, kind TEXT, text TEXT, source_text TEXT,
+  need REAL, sim REAL, basis TEXT, created REAL, PRIMARY KEY (project_id, sentence_id, lang, k)
+);
 CREATE TABLE IF NOT EXISTS takes (
   project_id TEXT, sentence_id INTEGER, job_id TEXT, take INTEGER, path TEXT, text TEXT,
   sim REAL, cer REAL, dur REAL, dur_s REAL, asr TEXT, chosen INTEGER DEFAULT 0, created REAL,
