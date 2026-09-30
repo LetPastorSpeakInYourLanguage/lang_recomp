@@ -132,8 +132,6 @@ ASR_MODELS = "am=badrex/Ethio-ASR-amharic"  #@param {type:"string"}
 #@markdown A speech recogniser per source language from Hugging Face (`lang=repo`, space separated). Languages not named use Whisper large-v3.
 ALIGNERS = ""  #@param {type:"string"}
 #@markdown Word aligners per language (`lang=repo`), over the built-in ones for ~27 languages.
-TRANSLATOR = "google"  #@param ["google", "yeha"]
-#@markdown `yeha`: [YehaTranslate](https://huggingface.co/hasab-ai/YehaTranslate) (Hasab AI) on this GPU, for English to or from Amharic, Afaan Oromo and Tigrinya; other languages still use Google. Accept its terms once on that page with the account of your HF_TOKEN. Licence: non-commercial (CC BY-NC 4.0).
 CAPTIONS = 0  #@param {type:"integer"}
 ALIGN_CAPTIONS = 0  #@param {type:"integer"}
 #@markdown YouTube only: also take YouTube's captions for the first N videos, force-align the first M, and compare with Whisper.

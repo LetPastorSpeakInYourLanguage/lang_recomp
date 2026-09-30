@@ -467,33 +467,21 @@ class Run:
 
     def translate(self) -> None:
         A = self.app
-        engine = self.opt.get("translator") or "google"
-        if engine != "google":  # a translation model needs the GPU Whisper and pyannote hold
-            self._free_models()
-        lines = fell_back = 0
-        try:
-            for k, pid in enumerate(self.pids):
-                if not A.db.row("SELECT 1 FROM sentences WHERE project_id=?", pid):
+        for k, pid in enumerate(self.pids):
+            if not A.db.row("SELECT 1 FROM sentences WHERE project_id=?", pid):
+                continue
+            for lang in self.langs_of(pid):
+                if lang not in A.project.targets(pid):
+                    A.project.add_target(pid, lang)
+                if all(s["tr"] for s in A.project.sentences(pid, lang)):
                     continue
-                for lang in self.langs_of(pid):
-                    if lang not in A.project.targets(pid):
-                        A.project.add_target(pid, lang)
-                    if all(s["tr"] for s in A.project.sentences(pid, lang)):
-                        continue
-                    try:
-                        res = A.project._translate(pid, lang, None, False, lambda *a: None, engine=engine)
-                        lines, fell_back = lines + res["lines"], fell_back + res["fell_back"]
-                    except Exception as e:
-                        self.log(f"translation failed for {pid} ({lang}): {str(e)[-200:]}")
-                self.mark(self.uid[pid], "translate", "done")
-                if (k + 1) % 25 == 0:
-                    self.log(f"translated {k + 1}/{len(self.pids)}")
-        finally:
-            if engine == "yeha":
-                A.project.yeha.free()  # voicing needs the whole GPU
-        if engine == "yeha" and lines:
-            self.log(f"YehaTranslate: {lines} lines, {fell_back} of them by Google instead "
-                     "(empty or wrong-script output, or a language pair it does not cover)")
+                try:
+                    A.project._translate(pid, lang, None, False, lambda *a: None)
+                except Exception as e:
+                    self.log(f"translation failed for {pid} ({lang}): {str(e)[-200:]}")
+            self.mark(self.uid[pid], "translate", "done")
+            if (k + 1) % 25 == 0:
+                self.log(f"translated {k + 1}/{len(self.pids)}")
 
     # ---- voice (heavy) ---------------------------------------------------------------------
     def dub_set(self) -> list[str]:
