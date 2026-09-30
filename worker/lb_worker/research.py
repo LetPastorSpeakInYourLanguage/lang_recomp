@@ -144,25 +144,13 @@ def secret(name: str) -> str | None:
     return os.environ.get(name) or None
 
 
-def pull_folder(bucket: str, folder: str, out: str | Path, token: str | None = None) -> Path:
-    """A folder of videos kept in the bucket (``folder`` relative to the bucket's top),
-    downloaded into ``out/<folder>`` (only what changed) so the run can read it."""
-    rel = folder.strip().strip("/")
-    dest = Path(out) / rel
-    print(f"downloading {rel}/ from hf://buckets/{bucket} …", flush=True)
-    Bucket(bucket, Path(out), token).pull(include=[f"{rel}/*"])
-    if not dest.is_dir():
-        raise SystemExit(f"no folder {rel}/ in the bucket {bucket}")
-    return dest
-
-
 class Bucket:
     """The output folder mirrored in a Hugging Face Storage Bucket (``namespace/name`` or
     ``namespace/name/prefix``): pulled when a run continues, pushed after every stage (in the
     background, so the GPU never waits) and at the end. The Lang-Bridge app pulls the same
     bucket to follow the run and open its results; Kaggle needs no Google Drive."""
 
-    EXCLUDE = ["cache/*", "*.part", "*.tmp.wav", "*/tmp/*"]
+    EXCLUDE = ["cache/*", ".lb/cache/*", "*.part", "*.tmp.wav", "*/tmp/*", "*.lb-write-test"]
 
     def __init__(self, name: str, root: Path, token: str | None = None, log=print):
         self.url = "hf://buckets/" + name.strip().strip("/").removeprefix("hf://buckets/")
@@ -307,7 +295,8 @@ def run_folder(videos: str | Path | None, output: str | Path, language: str = "e
     pids: list[str] = []
     if videos:
         folder = Path(videos)
-        nested = any(p.is_dir() and any(q.suffix.lower() in libraries.MEDIA for q in p.rglob("*")) for p in folder.iterdir())
+        nested = any(p.is_dir() and not p.name.startswith(".") and any(q.suffix.lower() in libraries.MEDIA for q in p.rglob("*"))
+                     for p in folder.iterdir())  # hidden folders (.lb: what runs made) are not videos
         if nested:  # works in subfolders: the library rules (docs/LIBRARY_FOLDERS.md)
             L = libraries.create(title, "here", str(folder), language, targets)
             found = libraries.scan(L["id"])
@@ -338,3 +327,48 @@ def run_folder(videos: str | Path | None, output: str | Path, language: str = "e
     r = runs.create_for(pids, "here", stages or ALL, opts, name=title, submit=False)
     print(f"run {r['run']}: {r['videos']} videos, stages {', '.join(r['stages'])}")
     return run_manifest(r["dir"], hf_token, cache, bucket)
+
+
+def _has_videos(folder: Path) -> bool:
+    from app import libraries
+
+    for dirpath, dirnames, filenames in os.walk(folder):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        if any(Path(f).suffix.lower() in libraries.MEDIA for f in filenames):
+            return True
+    return False
+
+
+def run_workspace(workspace: str | Path, language: str | None = None, targets: list[str] | None = None,
+                  links: list[str] | str | None = None, stages: list[str] | None = None, bucket: str | None = None,
+                  hf_token: str | None = None, **kw) -> dict:
+    """Run the pipeline on a team's working folder: its videos (any nesting) and the links
+    recorded in its ``lang-bridge.json`` plus any given now (they are recorded too). Results
+    go under ``<workspace>/.lb/``. With ``bucket``, the bucket is the workspace: it is pulled
+    into ``workspace`` first, and ``.lb/`` and the config are pushed back as the run goes.
+    Other keyword arguments are those of ``run_folder``."""
+    _repo_on_path()
+    from lb_core.workspace import config as wsconfig
+
+    ws = Path(workspace)
+    ws.mkdir(parents=True, exist_ok=True)
+    hf_token = hf_token or secret("HF_TOKEN")
+    if bucket:
+        print(f"getting the workspace from hf://buckets/{bucket} …", flush=True)
+        Bucket(bucket, ws, hf_token).pull()
+    cfg, warnings = wsconfig.open_workspace(ws, language, targets, read_links(links))
+    for w in warnings:
+        print("⚠ " + w, flush=True)
+    if bucket:  # the config (and the links in it) belong to the workspace in the bucket
+        from huggingface_hub import sync_bucket
+
+        sync_bucket(str(ws), Bucket(bucket, ws).url, include=[wsconfig.FILE], quiet=True, token=hf_token)
+    videos = ws if _has_videos(ws) else None
+    if not videos and not cfg.get("links"):
+        raise SystemExit(f"The workspace {ws} has no videos and no links yet: put videos in it, or set LINKS.")
+    print(f"workspace {cfg['name']}: {cfg['language']} → {', '.join(cfg['targets'])} · "
+          f"{'videos in the folder' if videos else 'no videos in the folder'} · {len(cfg.get('links') or [])} link(s)",
+          flush=True)
+    return run_folder(videos, ws / wsconfig.DATA, cfg["language"], cfg["targets"], stages, links=cfg.get("links"),
+                      name=kw.pop("name", None) or cfg["name"], hf_token=hf_token,
+                      bucket=f"{bucket}/{wsconfig.DATA}" if bucket else None, **kw)

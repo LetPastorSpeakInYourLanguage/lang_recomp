@@ -78,14 +78,19 @@ def _setup(tmp_path, monkeypatch, **kw):
     monkeypatch.setattr(env, "ensure_local", lambda *a: None)
     monkeypatch.delitem(sys.modules, "torch", raising=False)
     logs = []
-    args = dict(rt="local", root=tmp_path / "home", device="auto", storage="folder", output="", bucket="", token="")
+    args = dict(rt="local", root=tmp_path / "home", device="auto", storage="folder", workspace="", bucket="", token="")
     args.update(kw)
     return env.setup(**args, log=logs.append), "\n".join(logs)
 
 
+def test_setup_needs_a_workspace_folder(tmp_path, clean_env):
+    with pytest.raises(SystemExit, match="Set WORKSPACE"):
+        _setup(tmp_path, clean_env)  # even for links only: results always belong to a folder
+
+
 def test_setup_folder(tmp_path, clean_env):
-    m, log = _setup(tmp_path, clean_env, output=str(tmp_path / "results"), token="hf_secretvalue123")
-    assert m["out"] == tmp_path / "results" and m["out"].is_dir()
+    m, log = _setup(tmp_path, clean_env, workspace=str(tmp_path / "Preaching"), token="hf_secretvalue123")
+    assert m["workspace"] == tmp_path / "Preaching" and m["workspace"].is_dir()
     assert m["gpus"] == 0 and m["options"] == {"asr_model": "large-v3-turbo"}  # CPU: the faster Whisper
     assert os.environ["LB_WORK"] == str(tmp_path / "home" / "scratch")
     assert os.environ["HF_TOKEN"] == "hf_secretvalue123"
@@ -100,21 +105,21 @@ def test_setup_bucket(tmp_path, clean_env):
     with pytest.raises(SystemExit, match="namespace/name"):
         _setup(tmp_path, clean_env, storage="bucket", bucket="runs", token="hf_x")
     m, log = _setup(tmp_path, clean_env, storage="bucket", bucket="hf://buckets/org/runs/", token="hf_x",
-                    output="/somewhere", found=[T4, T4], rt="kaggle")
-    assert m["bucket"] == "org/runs" and m["out"] == tmp_path / "home" / "lb-out" and m["gpus"] == 2
-    assert "OUTPUT is not used" in log and "Tesla T4" in log
+                    found=[T4, T4], rt="kaggle")
+    assert m["bucket"] == "org/runs" and m["workspace"] == tmp_path / "home" / "workspace" and m["gpus"] == 2
+    assert "hf://buckets/org/runs" in log and "Tesla T4" in log
     assert os.environ["CUDA_VISIBLE_DEVICES"] == "0,1"
 
 
 def test_setup_token_from_environment(tmp_path, clean_env):
     clean_env.setenv("HF_TOKEN", "hf_fromserver")
-    m, _ = _setup(tmp_path, clean_env)
+    m, _ = _setup(tmp_path, clean_env, workspace=str(tmp_path / "ws"))
     assert m["token"] == "hf_fromserver"
 
 
-def test_readonly_output():
+def test_readonly_workspace():
     with pytest.raises(SystemExit, match="read-only"):
-        env.check_output(Path("/kaggle/input/videos"))
+        env.check_folder(Path("/kaggle/input/videos"))
 
 
 def test_secret_reads_only_the_environment(clean_env):
@@ -136,6 +141,7 @@ def test_notebooks_are_built_and_clean():
         assert "kaggle_secrets" not in "".join(code) and "userdata" not in "".join(code)
     main = "".join(build_notebook.CELLS[1]["source"])
     assert 'STORAGE = "folder"  #@param ["folder", "bucket"]' in main and 'BUCKET = ""' in main
+    assert 'WORKSPACE = ""' in main and "OUTPUT" not in main and "VIDEOS" not in main
 
 
 def test_get_code_uses_this_checkout(tmp_path, monkeypatch):

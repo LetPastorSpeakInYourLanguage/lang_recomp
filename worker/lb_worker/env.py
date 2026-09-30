@@ -100,11 +100,11 @@ def profile(n_gpus: int) -> dict:
     return {} if n_gpus else {"asr_model": "large-v3-turbo"}
 
 
-def check_output(path: Path) -> None:
-    """The output folder must be writable (Kaggle's /kaggle/input is not)."""
+def check_folder(path: Path) -> None:
+    """The workspace must be writable (Kaggle's /kaggle/input is not)."""
     if path.as_posix().startswith("/kaggle/input"):
-        raise SystemExit(f"{path} is read-only on Kaggle: leave OUTPUT empty (results go to /kaggle/working) "
-                         "and set BUCKET to keep them after the session.")
+        raise SystemExit(f"{path} is read-only on Kaggle: use STORAGE = bucket (the bucket is the workspace), "
+                         "or a WORKSPACE under /kaggle/working (lost when the session ends).")
     path.mkdir(parents=True, exist_ok=True)
     probe = path / ".lb-write-test"
     try:
@@ -157,28 +157,38 @@ def mask(secret: str | None) -> str:
     return f"{secret[:4]}…" if secret else "(not set)"
 
 
-def card(rt: str, root: Path, found: list[dict], n_gpus: int, storage: str, out: Path, bucket: str | None,
+def card(rt: str, root: Path, found: list[dict], n_gpus: int, storage: str, workspace: Path, bucket: str | None,
          token: str | None) -> str:
     """What the run will use, printed before it starts."""
     use = found[:n_gpus]
+    where = f"hf://buckets/{bucket}, worked on in {workspace}" if storage == "bucket" else str(workspace)
     lines = [f"runtime   {rt} · Python {sys.version.split()[0]}",
              "device    " + (", ".join(f"{g['name']} ({g['memory_gb']} GB)" for g in use) if use else "CPU"),
              f"RAM       {_ram_gb() or '?'} GB · free disk {shutil.disk_usage(root).free / 2**30:.0f} GB in {root}",
-             f"storage   {storage}: results in {out}" + (f" · pushed to hf://buckets/{bucket}" if bucket else ""),
+             f"workspace {where}" + (f" · backed up to hf://buckets/{bucket}" if bucket and storage == "folder" else ""),
              f"HF_TOKEN  {mask(token)}"]
     return "\n".join(lines)
 
 
-def setup(rt: str, root: Path, device: str = "auto", storage: str = "folder", output: str = "",
-          bucket: str = "", token: str = "", paths: tuple[str, ...] = (), log=print) -> dict:
+def setup(rt: str, root: Path, device: str = "auto", storage: str = "folder", workspace: str = "",
+          bucket: str = "", token: str = "", log=print) -> dict:
     """Everything the run needs from this machine, checked before any work starts.
-    ``token`` and ``bucket`` come from the notebook's settings (HF_TOKEN in the
-    environment is used when the setting is empty, e.g. on a server)."""
+
+    Every run has a workspace, the team's working folder, even when all its videos come
+    from links: STORAGE = folder → WORKSPACE (a Drive folder on Colab, any folder on your
+    machine); STORAGE = bucket → the bucket is the workspace, worked on in a local copy
+    (WORKSPACE if set, else WORK_DIR/workspace). ``token`` and ``bucket`` come from the
+    notebook's settings (HF_TOKEN in the environment is used when the setting is empty)."""
     storage = (storage or "folder").strip()
     if storage not in STORAGES:
         raise SystemExit(f"STORAGE must be one of: {', '.join(STORAGES)} (not {storage!r})")
     token = (token or "").strip() or os.environ.get("HF_TOKEN") or None
     bucket = (bucket or "").strip().removeprefix("hf://buckets/").strip("/") or None
+    workspace = (workspace or "").strip()
+    if storage == "folder" and not workspace:
+        raise SystemExit("Set WORKSPACE: the team's working folder (videos, links and all results live there; it may "
+                         "start empty). On Colab, a Drive folder such as /content/drive/MyDrive/LangBridge/<team>; "
+                         "on Kaggle, use STORAGE = bucket.")
     if storage == "bucket" and not bucket:
         raise SystemExit("STORAGE is 'bucket': set BUCKET to your Hugging Face bucket (namespace/name).")
     if bucket and bucket.count("/") < 1:
@@ -187,21 +197,21 @@ def setup(rt: str, root: Path, device: str = "auto", storage: str = "folder", ou
         raise SystemExit("A bucket needs HF_TOKEN: a Hugging Face token that can write to it.")
     root.mkdir(parents=True, exist_ok=True)
     if rt == "colab":
-        mount_drive(output, *paths)
+        mount_drive(workspace)
     found = gpus()
     n, warnings = choose_device(device, rt, found)
     apply_device(n, len(found))
     if rt == "local":
         ensure_local(n, log)
-    if storage == "bucket" and output.strip():
-        warnings.append(f"STORAGE is 'bucket': OUTPUT is not used; the working copy is {root / 'lb-out'}.")
-    out = Path(output.strip()).expanduser() if storage == "folder" and output.strip() else root / "lb-out"
-    check_output(out)
+    ws = Path(workspace).expanduser() if workspace else root / "workspace"
+    if rt == "kaggle" and storage == "folder" and not ws.as_posix().startswith("/kaggle/input"):
+        warnings.append("A folder on Kaggle is lost when the session ends: STORAGE = bucket keeps the workspace.")
+    check_folder(ws)
     os.environ["LB_WORK"] = str(root / "scratch")
     if token:
         os.environ["HF_TOKEN"] = token
-    log(card(rt, root, found, n, storage, out, bucket, token))
+    log(card(rt, root, found, n, storage, ws, bucket, token))
     for w in warnings:
         log("⚠ " + w)
-    return {"runtime": rt, "root": root, "out": out, "bucket": bucket, "token": token, "gpus": n,
+    return {"runtime": rt, "root": root, "workspace": ws, "bucket": bucket, "token": token, "gpus": n,
             "storage": storage, "options": profile(n), "warnings": warnings}

@@ -99,10 +99,10 @@ Everything is set in the **Settings** cell, the token and bucket included.
 
 CELLS = [
     cell("markdown", f"""
-# Lang-Bridge — dub videos from links or a folder
+# Lang-Bridge — dub a team's videos and links
 
-Runs the whole pipeline — **fetch → transcribe → translate → voice → mix** — on a list of
-links (videos, playlists, channels) and/or a folder of videos, from any language into any languages, with no app needed.
+Runs the whole pipeline — **fetch → transcribe → translate → voice → mix** — on a team's
+working folder: its own videos and/or links (videos, playlists, channels), from any language into any languages, with no app needed.
 The Lang-Bridge app can open the results to check, fix and listen.
 {INTRO}
 Safe to stop at any time: run again with the same settings to continue (or see RUN_FOLDER).
@@ -110,20 +110,18 @@ Guide: [{REPO}/tree/main/notebooks]({REPO}/tree/main/notebooks)
 """),
     cell("code", """
 #@title Settings
+WORKSPACE = ""  #@param {type:"string"}
+#@markdown The team's working folder — always needed, even if it starts empty or all videos come from links. It holds the team's videos (any nesting; `name.srt` beside a video is used instead of transcribing), `lang-bridge.json` (language, targets, every link added) and all results in `.lb/`. Colab: a Drive folder, e.g. `/content/drive/MyDrive/LangBridge/Preaching`; your machine: any folder. With STORAGE = bucket: leave empty (a local copy in WORK_DIR).
 STORAGE = "folder"  #@param ["folder", "bucket"]
-#@markdown `folder`: results go to OUTPUT. `bucket`: results are pushed to BUCKET after every stage (the app syncs them), and VIDEOS may be a folder inside the bucket.
-LINKS = ""  #@param {type:"string"}
-#@markdown Links to videos, playlists or channels (YouTube or any site yt-dlp supports), separated by spaces, or a `.txt` file with one link per line. **Links need no folder**: leave VIDEOS empty and they are downloaded here.
-VIDEOS = ""  #@param {type:"string"}
-#@markdown A folder of videos (subfolders are works; `name.srt` beside a video is used instead of transcribing). With STORAGE = bucket, a folder in the bucket (e.g. `videos/sermons`).
-LANGUAGE = "en"  #@param {type:"string"}
-#@markdown The videos' language (e.g. `en`, `tr`, `am`).
-TARGETS = "am"  #@param {type:"string"}
-#@markdown Languages to dub into, e.g. `am om ti` or `en`.
-OUTPUT = ""  #@param {type:"string"}
-#@markdown STORAGE = folder: where results go (a Drive folder on Colab, any folder on your machine). Empty: `lb-out` in WORK_DIR.
+#@markdown `folder`: the workspace is WORKSPACE. `bucket`: the workspace is BUCKET — downloaded first, results pushed back after every stage (the app syncs it). On Kaggle use `bucket`.
 BUCKET = ""  #@param {type:"string"}
-#@markdown A Hugging Face bucket, `namespace/name`. Needed for STORAGE = bucket; with STORAGE = folder it is a backup the results are also pushed to.
+#@markdown A Hugging Face bucket, `namespace/name`. Needed for STORAGE = bucket; with a folder it is left alone.
+LINKS = ""  #@param {type:"string"}
+#@markdown Links to add: videos, playlists or channels (YouTube or any site yt-dlp supports), separated by spaces, or a `.txt` file with one link per line. They are recorded in the workspace and downloaded into it; links added before are always included.
+LANGUAGE = "en"  #@param {type:"string"}
+#@markdown The videos' language (e.g. `en`, `tr`, `am`). Must match an existing workspace's.
+TARGETS = "am"  #@param {type:"string"}
+#@markdown Languages to dub into, e.g. `am om ti`. Added to the workspace's own (both are done).
 STAGES = "fetch transcribe translate voice mix"  #@param {type:"string"}
 #@markdown Which stages: e.g. `fetch transcribe` for transcripts only.
 DUB_LIMIT = 0  #@param {type:"integer"}
@@ -134,47 +132,45 @@ ASR_MODELS = "am=badrex/Ethio-ASR-amharic"  #@param {type:"string"}
 #@markdown A speech recogniser per source language from Hugging Face (`lang=repo`, space separated). Languages not named use Whisper large-v3.
 ALIGNERS = ""  #@param {type:"string"}
 #@markdown Word aligners per language (`lang=repo`), over the built-in ones for ~27 languages.
+TRANSLATOR = "google"  #@param ["google", "yeha"]
+#@markdown `yeha`: [YehaTranslate](https://huggingface.co/hasab-ai/YehaTranslate) (Hasab AI) on this GPU, for English to or from Amharic, Afaan Oromo and Tigrinya; other languages still use Google. Accept its terms once on that page with the account of your HF_TOKEN. Licence: non-commercial (CC BY-NC 4.0).
 CAPTIONS = 0  #@param {type:"integer"}
 ALIGN_CAPTIONS = 0  #@param {type:"integer"}
 #@markdown YouTube only: also take YouTube's captions for the first N videos, force-align the first M, and compare with Whisper.
 RUN_FOLDER = ""  #@param {type:"string"}
-#@markdown Continue a run: its folder (`…/runs/<run>`; with STORAGE = bucket, `runs/<run>`). Settings above are then ignored.
+#@markdown Continue a run: `runs/<run>` (in the workspace's `.lb/`), or a full path. Settings above are then ignored.
 """ + MACHINE),
     cell("code", GET_CODE, form=True),
     cell("code", """
 #@title Set up this machine
 from lb_worker import env
-M = env.setup(RUNTIME, ROOT, DEVICE, STORAGE, OUTPUT, BUCKET, HF_TOKEN, paths=(VIDEOS, RUN_FOLDER))
+M = env.setup(RUNTIME, ROOT, DEVICE, STORAGE, WORKSPACE, BUCKET, HF_TOKEN)
 """, form=True),
     cell("code", """
 #@title Run
-from lb_worker.research import pull_folder, run_folder, run_manifest
+from lb_worker.research import run_manifest, run_workspace
 
 pairs = lambda text: dict(p.split('=', 1) for p in text.split() if '=' in p)
-videos = VIDEOS.strip() or None
-in_bucket = lambda p: M['storage'] == 'bucket' and not os.path.isabs(p)
-if videos and in_bucket(videos):
-    videos = str(pull_folder(M['bucket'], videos, M['out'], M['token']))
 if RUN_FOLDER.strip():
-    folder = M['out'] / RUN_FOLDER.strip() if in_bucket(RUN_FOLDER.strip()) else RUN_FOLDER.strip()
-    result = run_manifest(folder, hf_token=M['token'], bucket=M['bucket'])
+    folder = RUN_FOLDER.strip() if os.path.isabs(RUN_FOLDER.strip()) else M['workspace'] / '.lb' / RUN_FOLDER.strip()
+    result = run_manifest(folder, hf_token=M['token'], bucket=M['bucket'] and M['bucket'] + '/.lb')
 else:
-    result = run_folder(videos, M['out'], LANGUAGE.strip(), TARGETS.split(), STAGES.split(),
-                        links=LINKS, dub_limit=DUB_LIMIT or None, limit=LIMIT or None,
-                        captions=CAPTIONS, align_captions=ALIGN_CAPTIONS, hf_token=M['token'],
-                        asr_models=pairs(ASR_MODELS), aligners=pairs(ALIGNERS), bucket=M['bucket'],
-                        options=M['options'])
+    result = run_workspace(M['workspace'], LANGUAGE, TARGETS.split(), LINKS, STAGES.split(),
+                           bucket=M['bucket'] if M['storage'] == 'bucket' else None, hf_token=M['token'],
+                           dub_limit=DUB_LIMIT or None, limit=LIMIT or None, captions=CAPTIONS,
+                           align_captions=ALIGN_CAPTIONS, asr_models=pairs(ASR_MODELS), aligners=pairs(ALIGNERS),
+                           options=M['options'])
 """, form=True),
     cell("markdown", """
 ## Look at the results
 
-- **Without the app**: the dubbed videos are in `library/<work>/<video>/export/` under the
-  results folder (OUTPUT, or the bucket).
+- **Without the app**: the dubbed videos are in `.lb/library/<work>/<video>/export/` in the
+  workspace (the folder, or the bucket).
 - **With a bucket**: in the Lang-Bridge app, Settings → Folders → add one of kind
   **Hugging Face bucket**, then **Sync**; the run's progress shows as it goes and its results
   open by themselves.
-- **With a folder the app can see** (Drive for Desktop, or this PC): Settings → Folders → add
-  it as a **results folder**; its runs appear under Home → Runs.
+- **With a workspace folder the app can see** (Drive for Desktop, or this PC): Settings →
+  Folders → add it as a **results folder**; its runs appear under Home → Runs.
 
 Done with the GPU? Colab: **Runtime → Disconnect and delete runtime**; Kaggle: **Stop session**.
 """),
@@ -192,8 +188,9 @@ E2E = [
 # Lang-Bridge end-to-end test: two videos → Hugging Face bucket → the app
 
 Two 6 Minute English episodes (Neil and a co-host), English → Amharic, every stage, results
-pushed to your bucket after each stage. Fill in `HF_TOKEN` (can write to the bucket) and
-`BUCKET` (e.g. `you/lang-bridge-runs`) below, then **Run all**, and follow it in the app
+pushed to your bucket after each stage. The bucket is the test's workspace (its links are
+recorded in its `lang-bridge.json`). Fill in `HF_TOKEN` (can write to the bucket) and
+`BUCKET` (e.g. `you/lang-bridge-test`) below, then **Run all**, and follow it in the app
 (Home → Runs on …).
 {INTRO}"""),
     cell("code", """
@@ -205,10 +202,10 @@ BUCKET = ""  #@param {type:"string"}
     cell("code", f"""
 #@title Run the test
 from lb_worker import env
-from lb_worker.research import run_folder
+from lb_worker.research import run_workspace
 M = env.setup(RUNTIME, ROOT, DEVICE, 'bucket', '', BUCKET, HF_TOKEN)
-result = run_folder(None, M['out'], 'en', ['am'], name='E2E test', links={json.dumps(SIX_MINUTE[:2])},
-                    bucket=M['bucket'], hf_token=M['token'], options=M['options'])
+result = run_workspace(M['workspace'], 'en', ['am'], {json.dumps(SIX_MINUTE[:2])}, bucket=M['bucket'],
+                       hf_token=M['token'], options=M['options'])
 """, form=True),
 ]
 
@@ -245,7 +242,7 @@ RUN_IDENTITY = True  #@param {{type:"boolean"}}
 #@title Set up this machine
 from lb_worker import env
 M = env.setup(RUNTIME, ROOT, DEVICE, 'folder', str(ROOT / 'lb-bench'), '', HF_TOKEN)
-OUT = str(M['out'])  # results: lb-bench in WORK_DIR
+OUT = str(M['workspace'])  # results: lb-bench in WORK_DIR
 os.environ.setdefault('LB_CACHE', OUT + '/cache')
 """, form=True),
     cell("code", """

@@ -12,7 +12,7 @@ from pathlib import Path
 
 from . import settings
 
-EXCLUDE = ["cache/*", "*.part", "*.tmp.wav", "*/tmp/*"]
+EXCLUDE = ["cache/*", ".lb/cache/*", "*.part", "*.tmp.wav", "*/tmp/*", "*.lb-write-test"]
 _last: dict[str, float] = {}
 
 

@@ -59,8 +59,8 @@ Your projects, settings and exports are stored in `data/` inside the app folder
 
 Transcription, speaker detection, separation, cloned voices and mixing run in a notebook you
 start yourself: **[`notebooks/lang_bridge.ipynb`](notebooks/lang_bridge.ipynb)**. It dubs a
-list of links (videos, playlists, channels; no folder needed) and/or a folder of videos
-end to end with no app, and finds out where it runs
+team's working folder (its own videos, and links to videos, playlists or channels recorded in
+it) end to end with no app, and finds out where it runs
 by itself:
 
 - **Kaggle**: uses both GPUs of *GPU T4 x2*; keep results with `STORAGE = bucket`.
@@ -68,8 +68,7 @@ by itself:
 - **Your own machine** (Jupyter, Python ≥ 3.10): an NVIDIA GPU if there is one, otherwise the
   CPU; PyTorch and ffmpeg are installed if missing.
 
-Everything is typed in its **Settings** cell: `STORAGE` (folder or bucket), `LINKS`,
-`VIDEOS`, `LANGUAGE`, `TARGETS`, `OUTPUT`, `BUCKET`, `HF_TOKEN`, `DEVICE` (auto / cpu /
+Everything is typed in its **Settings** cell: `WORKSPACE` (always needed), `STORAGE` (folder or bucket), `LINKS`, `LANGUAGE`, `TARGETS`, `BUCKET`, `HF_TOKEN`, `DEVICE` (auto / cpu /
 1 GPU / 2 GPUs). **Never share or commit the notebook with your token filled in.** Full
 guide: **[notebooks/README.md](notebooks/README.md)**.
 
@@ -79,7 +78,7 @@ add it as a *Results folder*. Its runs show on Home, and their results open by t
 The app's Run panel can also *prepare* a run for chosen videos: put the printed folder in
 the notebook's `RUN_FOLDER`.
 
-On a server: `from lb_worker.research import run_folder` (see `worker/lb_worker/research.py`).
+On a server: `from lb_worker.research import run_workspace` (see `worker/lb_worker/research.py`).
 
 ---
 

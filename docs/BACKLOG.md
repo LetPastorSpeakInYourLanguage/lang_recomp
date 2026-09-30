@@ -28,6 +28,7 @@ local disks); then teams working on shared metadata with distributed compute.*
 ## P0 — to hear the first Colab-made dubs
 
 - [x] **WS P3a** Notebooks re-created under `notebooks/`, running anywhere: Kaggle (2 × T4 detected), Colab (1 × T4), local Jupyter; `HF_TOKEN`/`BUCKET`/DEVICE/STORAGE in the settings cell (no platform secrets); app opens plain result folders (kind `folder`). `lb_worker/env.py`; tested locally (setup cells in a kernel).
+- [x] **WS P3a** A working folder is always needed (decision 45): WORKSPACE replaces VIDEOS/OUTPUT; `lang-bridge.json` (lb_core/workspace/config.py) records language, targets, every link; results in `<workspace>/.lb/`; STORAGE = bucket → the bucket is the workspace; app finds runs in `.lb/`.
 - [ ] **WS P3a** Owner runs `notebooks/e2e_test.ipynb` on Kaggle (T4 x2) and `notebooks/lang_bridge.ipynb` on Colab (T4) with the settings-cell token/bucket; fix what breaks.
 - [ ] **WS P3b** Intel Arc (XPU) shown in the machine card (today the stages use it when present, the card says CPU).
 - [ ] **WS P0** Decisions 35–44, plan in the repo (this commit), SCALE_DESIGN/SCALE_PLAN notes.

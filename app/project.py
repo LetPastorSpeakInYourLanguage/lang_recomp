@@ -13,6 +13,7 @@ from pathlib import Path
 
 from . import cast, chapters as chaps, db, settings, tasks
 from .jobs.drive_queue import DriveQueue
+from .translate import yeha
 from .translate.google_batch import GoogleBatchTranslator
 from .translate.length import budget
 from .interjections import effective_mode, keep_words, suggest_keep
@@ -550,19 +551,30 @@ def translate(pid: str, lang: str | None = None, chapter: int | None = None, for
     return tasks.start(pid, "translate", _translate, pid, lang_or_primary(pid, lang), chapter, force)
 
 
-def _translate(pid: str, lang: str, chapter: int | None, force: bool, update) -> None:
+ENGINES = ("google", "yeha")
+
+
+def _translate(pid: str, lang: str, chapter: int | None, force: bool, update, engine: str | None = None) -> dict:
+    """``engine``: "google" (default) or "yeha" (YehaTranslate on this machine's GPU, for
+    English <-> Amharic/Oromo/Tigrinya; other pairs, and lines it fails, use Google)."""
+    if (engine or "google") not in ENGINES:
+        raise ValueError(f"unknown translation engine {engine!r} (one of {', '.join(ENGINES)})")
     p = get(pid)
     # lines of a recurring part are translated once, at its origin
     todo = [[s for s in lines if not s["linked"]] for c, lines in chaps.group(sentences(pid, lang), chaps.ensure(pid))
             if chapter is None or c["id"] == chapter]
     todo = [lines for lines in todo if lines]
     tr = GoogleBatchTranslator(p["src_lang"], lang, context=2)
+    if engine == "yeha" and yeha.supports(p["src_lang"], lang):
+        tr = yeha.YehaTranslator(p["src_lang"], lang, fallback=tr)
     for i, ch in enumerate(todo):
         update(i / len(todo), f"chapter {i + 1}/{len(todo)}")
         # Context never crosses a chapter break: a chapter is one topic.
         res = tr.translate([{"id": s["id"], "text": s["text"]} for s in ch])
         for s in ch:  # people's wording is never replaced by the engine unless forced
             set_translation(pid, s["id"], lang, res.get(s["id"], ""), locked=False, provenance="machine", force=force)
+    return {"engine": "yeha" if isinstance(tr, yeha.YehaTranslator) else "google",
+            "lines": sum(len(ch) for ch in todo), "fell_back": getattr(tr, "fell_back", 0)}
 
 
 # ---- merge / split -----------------------------------------------------------------------

@@ -25,11 +25,15 @@ STAGES = ["fetch", "transcribe", "translate", "voice", "mix"]
 VIDEO = {".mp4", ".mkv", ".webm", ".mov", ".m4v", ".avi", ".mp3", ".m4a", ".wav", ".flac", ".ogg", ".opus"}
 SUBS = (".srt", ".vtt")
 DEFAULTS = {"dub_limit": None, "captions_download": 0, "captions_align": 0, "align_subtitles": True,
-            "height": 720, "takes": 1, "asr_model": "large-v3", "assume_checked": True, "mix_threads": 2}
+            "height": 720, "takes": 1, "asr_model": "large-v3", "assume_checked": True, "mix_threads": 2,
+            "translator": "google"}
 
 
 def _root(root_id: str) -> Path:
-    return Path(settings.root(root_id)["path"])
+    """Where a device's runs and library are: a team workspace keeps them in ``.lb/``
+    (notebooks/lang_bridge.ipynb, lb_core/workspace); older output folders at the top."""
+    p = Path(settings.root(root_id)["path"])
+    return p / ".lb" if (p / ".lb").is_dir() else p
 
 
 def folder_sources(sid: str, folder: str, root_id: str) -> list[str]:

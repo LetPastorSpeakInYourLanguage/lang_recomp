@@ -9,7 +9,7 @@ if [ -n "$(git status --porcelain)" ]; then
 fi
 echo "== $(git log --oneline -1)"
 fail=0
-python -m compileall -q app worker scripts tests >/dev/null || { echo "compile FAILED"; fail=1; }
+python -m compileall -q app lb_core worker scripts tests >/dev/null || { echo "compile FAILED"; fail=1; }
 python -m pytest -q tests 2>&1 | tail -1 | sed 's/^/pytest: /'
 python -m pytest -q tests >/dev/null 2>&1 || fail=1
 if [ "${1:-}" = "web" ]; then
