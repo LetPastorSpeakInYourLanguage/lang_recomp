@@ -35,7 +35,11 @@ local disks); then teams working on shared metadata with distributed compute.*
 - [ ] **WS P1** `lb_core/`: pure logic out of `app/` (no behaviour change).
 - [ ] **WS P2** Workspace protocol v1 (`lb_core/workspace/`): schema, identity uids, config conflicts, manual over auto, hashes/staleness, tasks, ownership.
 - [ ] **WS P4** Pipeline on the workspace (stale-only, hash-named takes, dubs/ output); retire the job queue and old stages.
-- [ ] **WS P5** E3 bench, then Gemma chapters + translation loop (source and target options).
+- [x] **WS P5a** Lines too long to fit get shorter English from Gemma 4 on llama.cpp, translated again; versions stored and chosen in the Translate screen (decision 47, [SHORTEN.md](SHORTEN.md), branch `feat/shorten`).
+- [ ] **WS P5a** Owner's Colab run: about 3 episodes of 6 Minute English with SHORTEN_WITH_LLM on and off; compare `shorten.json`, `fit.json` overflow, tokens/s; listen; set `MIN_SIM` from the meaning scores.
+- [ ] **WS P5b** A rescue pass after voicing for lines whose real take still overflows (measured, not predicted).
+- [ ] **WS P5c** Target-side shortening for chosen languages (built into the plan, off everywhere); Amharic after E3.
+- [ ] **WS P5** E3 bench, then Gemma chapters (embeddings + pauses propose, the model adjusts by line number and writes title/summary/key terms) + translation loop options.
 - [ ] **WS P6** App on workspaces: ingest cache, write-through `manual/`, board, tasks, preview gate, bucket push of app-owned paths.
 - [ ] **WS P7** Supabase central metadata (devices, mounts, media copies, sync by revision, cross-team reuse).
 - [ ] **WS P8** Migrate existing works, retire old code, acceptance 1–7, merge.

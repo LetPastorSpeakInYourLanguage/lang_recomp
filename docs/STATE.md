@@ -5,7 +5,11 @@ The working memory of this project. Read this first when picking the work up.
 Plan: [PLAN.md](PLAN.md). Decisions and why: [DECISIONS.md](DECISIONS.md).
 Hard-won lessons: [LESSONS.md](LESSONS.md).
 
-**Last updated:** 2026-09-30 — **new plan approved: [WORKSPACE_PLAN.md](WORKSPACE_PLAN.md)** (branch `feat/workspace`); first step: notebooks under `notebooks/` that run anywhere.
+**Last updated:** 2026-10-01 — **lines too long to fit are shortened by a local LLM** (decision 47,
+[SHORTEN.md](SHORTEN.md), branch `feat/shorten`): Gemma 4 E4B on llama.cpp's prebuilt server rewrites
+the English of tight lines only, Google translates it, code measures and picks; notebook setting
+`SHORTEN_WITH_LLM` (on). Next: the owner's Colab run with it on and off.
+Before: 2026-09-30 — new plan approved: [WORKSPACE_PLAN.md](WORKSPACE_PLAN.md); notebooks under `notebooks/` that run anywhere.
 
 ---
 
