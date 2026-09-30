@@ -13,7 +13,10 @@ import time
 from . import banks, cast, db, langs, project, settings
 from .translate.length import syllables
 
-ENGINE = {"model": "k2-fsa/OmniVoice", "steps": 16, "speed": 1.4, "takes": 2, "batch": 1}  # batch: takes per call (T4: no gain above 1, docs/CERTIFICATION.md)
+ENGINE = {"model": "k2-fsa/OmniVoice", "steps": 16, "speed": 1.4, "takes": 2, "batch": 1,  # batch: takes per call (T4: no gain above 1, docs/CERTIFICATION.md)
+          # decision 46: native speech, then Seed-VC into the character's voice, where the language has native
+          # voices (worker/lb_worker/native_vc.py); "clone" = OmniVoice straight from the bank everywhere
+          "path": "native_vc", "native_speed": 1.0, "vc_steps": 25}
 
 
 def _init() -> None:

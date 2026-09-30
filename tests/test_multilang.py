@@ -127,7 +127,8 @@ def test_two_gpus_share_the_voicing_and_the_scoring(tmp_path, monkeypatch, stubs
     _tone(videos / "a.mp4", 4, 440, video=True)
     res = research.run_folder(videos, tmp_path / "out", "en", ["am"], hf_token="hf_test")
     assert res["videos"] == 1 and list((tmp_path / "out").rglob("*.am.mp4"))
-    assert sorted(gpus) == [("omnivoice_gen.py", "0"), ("omnivoice_gen.py", "1"), ("score.py", "0"), ("score.py", "1")]
+    assert sorted(gpus) == [("omnivoice_gen.py", "0"), ("omnivoice_gen.py", "1"), ("score.py", "0"), ("score.py", "1"),
+                            ("svc_batch.py", "0"), ("svc_batch.py", "1")]  # native speech, then Seed-VC, on both
     db._local.c = None
 
 

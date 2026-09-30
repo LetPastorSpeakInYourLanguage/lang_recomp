@@ -17,6 +17,9 @@ from lb_worker.stages import analysis, bakeoff, run as runmod  # noqa: E402
 from lb_worker.stages import align as alignmod  # noqa: E402
 
 
+RAN: list = []  # (script, manifest, command) of every voice-stage command a test ran
+
+
 def _tone(path: Path, secs: float, hz: float, video: bool = False) -> None:
     src = ["-f", "lavfi", "-i", f"sine=frequency={hz}:duration={secs}"]
     vid = ["-f", "lavfi", "-i", f"color=c=black:s=64x64:d={secs}", "-shortest", "-c:v", "libx264", "-pix_fmt", "yuv420p"] if video else []
@@ -48,7 +51,7 @@ class Ctx:
 
 
 @pytest.fixture()
-def stubs(monkeypatch):
+def stubs(monkeypatch, tmp_path):
     def transcribe_many(model, audios, lang, size):
         return {pid: {"language": "en", "model": size, "segments": [
             {"start": 0.3, "end": 1.6, "text": "Hello there.", "words": [{"w": "Hello", "start": 0.3, "end": 0.8}, {"w": "there.", "start": 0.9, "end": 1.6}]},
@@ -75,12 +78,22 @@ def stubs(monkeypatch):
 
     monkeypatch.setattr(analysis, "separate_file", separate_file)
     monkeypatch.setattr(bakeoff, "pip", lambda ctx, *specs: True)
+    # the native path (decision 46): a native voice per gender, then Seed-VC; no downloads in tests
+    monkeypatch.setattr(runmod.NV, "gender_of", lambda wav: "male")
+
+    def voice_ref(lang, gender, cache):
+        _tone(tmp_path / f"native_{gender}.wav", 2, 150)
+        return str(tmp_path / f"native_{gender}.wav"), "ሰላም"
+
+    monkeypatch.setattr(runmod.NV, "voice_ref", voice_ref)
+    monkeypatch.setattr(runmod.NV, "seedvc_checkout", lambda where, cache, pip, log: where / "seed-vc")
 
     def sh(cmd, ctx, cwd=None, timeout=3600, **kw):
         cmd = [str(c) for c in cmd]
         man = json.loads(Path(cmd[cmd.index("--manifest") + 1]).read_text(encoding="utf-8"))
         out = Path(cmd[cmd.index("--out") + 1])
-        if cmd[1].endswith("omnivoice_gen.py"):
+        if cmd[1].endswith(("omnivoice_gen.py", "svc_batch.py")):
+            RAN.append((Path(cmd[1]).name, man, cmd))
             for it in man:
                 t = np.arange(16000) / 16000
                 wavfile.write(it["out"], 16000, (np.sin(2 * np.pi * 330 * t) * 8000).astype(np.int16))
@@ -101,6 +114,7 @@ def stubs(monkeypatch):
 
 
 def test_a_folder_run_goes_from_videos_to_dubbed_mp4s_and_the_app_opens_it(tmp_path, monkeypatch, stubs):
+    RAN.clear()
     lib = tmp_path / "app-library"
     monkeypatch.setattr(db, "DATA", lib)
     monkeypatch.setattr(db, "DB_PATH", lib / "t.db")
@@ -141,6 +155,14 @@ def test_a_folder_run_goes_from_videos_to_dubbed_mp4s_and_the_app_opens_it(tmp_p
     assert db.meta(subs)["transcript"]["source"] == "subtitles"
     listed = runs.listing(f"series:{s['id']}")
     assert listed[0]["done"]["mix"] == 2 and listed[0]["has_results"]
+    # Amharic is voiced natively, then converted into the character's voice (decision 46)
+    gen = [(m, c) for name, m, c in RAN if name == "omnivoice_gen.py"]
+    svc = [m for name, m, c in RAN if name == "svc_batch.py"]
+    assert gen and svc
+    assert all(c[c.index("--model") + 1] == runmod.NV.NATIVE["am"]["model"] for m, c in gen)
+    assert all(it["ref_audio"].endswith("native_male.wav") and it["speed"] == 1.0 for m, c in gen for it in m)
+    assert {it["out"] for m in svc for it in m} == {it["final"] for m, c in gen for it in m}
+    assert {it["target"] for m in svc for it in m} == {it["target"] for m, c in gen for it in m}
 
 
 def test_a_library_run_spans_works_and_finds_the_same_teacher_in_all_of_them(tmp_path, monkeypatch, stubs):

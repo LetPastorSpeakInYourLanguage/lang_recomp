@@ -132,6 +132,8 @@ ASR_MODELS = "am=badrex/Ethio-ASR-amharic"  #@param {type:"string"}
 #@markdown A speech recogniser per source language from Hugging Face (`lang=repo`, space separated). Languages not named use Whisper large-v3.
 ALIGNERS = ""  #@param {type:"string"}
 #@markdown Word aligners per language (`lang=repo`), over the built-in ones for ~27 languages.
+VOICE = "native"  #@param ["native", "clone"]
+#@markdown `native`: each line is first spoken by a native speaker's voice (Amharic for now), then turned into the character's voice with Seed-VC, so pauses and rhythm are the language's own. `clone`: the character's voice is cloned straight from its English lines (the old way; languages without native voices always use it).
 CAPTIONS = 0  #@param {type:"integer"}
 ALIGN_CAPTIONS = 0  #@param {type:"integer"}
 #@markdown YouTube only: also take YouTube's captions for the first N videos, force-align the first M, and compare with Whisper.
@@ -157,7 +159,7 @@ else:
                            bucket=M['bucket'] if M['storage'] == 'bucket' else None, hf_token=M['token'],
                            dub_limit=DUB_LIMIT or None, limit=LIMIT or None, captions=CAPTIONS,
                            align_captions=ALIGN_CAPTIONS, asr_models=pairs(ASR_MODELS), aligners=pairs(ALIGNERS),
-                           options=M['options'])
+                           options={**M['options'], 'voice_path': 'native_vc' if VOICE == 'native' else 'clone'})
 """, form=True),
     cell("markdown", """
 ## Look at the results

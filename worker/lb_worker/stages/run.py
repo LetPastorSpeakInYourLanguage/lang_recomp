@@ -39,7 +39,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from .. import asr, batch_asr
-from ..deps import ensure, gpu_count
+from .. import native_vc as NV
+from ..deps import cache_dir, ensure, gpu_count
 from ..registry import stage
 
 STAGES = ["fetch", "transcribe", "translate", "voice", "mix"]
@@ -570,26 +571,33 @@ class Run:
                                      "speaker": f"{uid}:{s['speaker']}"}
             if not items:
                 continue
-            todo = sum(1 for it in items if not Path(it["out"]).exists())
-            self.log(f"voice {lang}: {len(items)} takes for {len(dub)} videos ({todo} to make), one model load")
+            todo = [it for it in items if not Path(it["out"]).exists()]
+            path = NV.path_for(lang, self.opt.get("voice_path") or engine.get("path"))
+            self.log(f"voice {lang}: {len(items)} takes for {len(dub)} videos ({len(todo)} to make), "
+                     + ("native speech, then each character's voice (Seed-VC)" if path == "native_vc"
+                        else "cloned from each character's lines"))
             if todo:
                 if not pip(ctx, "omnivoice"):
                     raise RuntimeError("pip install omnivoice failed")
                 from app import langs as L
                 t = time.time()
-                parts = self._split(items)
-                self.log(f"voicing {todo} {lang} takes with OmniVoice ({engine['steps']} steps)"
+                gen = self._native_items(lang, todo, engine) if path == "native_vc" else todo
+                model = NV.NATIVE[lang]["model"] if path == "native_vc" else engine["model"]
+                parts = self._split(gen)
+                self.log(f"voicing {len(gen)} {lang} takes with {model} ({engine['steps']} steps)"
                          + (f" on {len(parts)} GPUs" if len(parts) > 1 else "") + ": loading the model, "
                          "then a progress line every 30 s")
                 cmds = []
                 for i, part in enumerate(parts):
                     man = ctx.work / f"gen_{lang}_{i}.json"
                     man.write_text(json.dumps(part, ensure_ascii=False), encoding="utf-8")
-                    cmds.append([sys.executable, TTS / "omnivoice_gen.py", "--model", engine["model"], "--manifest", man,
+                    cmds.append([sys.executable, TTS / "omnivoice_gen.py", "--model", model, "--manifest", man,
                                  "--out", ctx.work / f"gen_{lang}_{i}_res.json", "--steps", str(engine["steps"]),
                                  "--language", L.name(lang), "--batch", str(engine.get("batch", 1))])
                 self._side_by_side(cmds, timeout=12 * 3600)
-                self.log(f"voiced {todo} takes in {time.time() - t:.0f} s")
+                if path == "native_vc":
+                    self._convert(lang, gen, engine)
+                self.log(f"voiced {len(todo)} takes in {time.time() - t:.0f} s")
             made = [it for it in items if Path(it["out"]).exists()]
             reader = (self.opt.get("aligners") or {}).get(lang) or asr.DEFAULT_ALIGNERS.get(lang) or "none"
             self.log(f"scoring {len(made)} {lang} takes (voice likeness" + ("" if reader == "none" else ", read back by ASR")
@@ -622,6 +630,51 @@ class Run:
                     A.voice.record_takes(pid, lang, f"run-{self.id}", lines)
         for pid in dub:
             self.mark(self.uid[pid], "voice", "done")
+
+    def _native_items(self, lang: str, todo: list[dict], engine: dict) -> list[dict]:
+        """What OmniVoice says first on the native path: each line in the target language,
+        prompted by a native voice of the character's gender, into the scratch folder;
+        ``final`` is the take the conversion then writes, ``target`` the character's bank."""
+        cache = cache_dir("native-voices")
+        genders = getattr(self, "_genders", {})
+        self._genders = genders
+        gen = []
+        for it in todo:
+            if it["ref_audio"] not in genders:
+                genders[it["ref_audio"]] = NV.gender_of(it["ref_audio"])
+                self.log(f"{Path(it['ref_audio']).stem}: {genders[it['ref_audio']]} native {lang} voice")
+            ref, ref_text = NV.voice_ref(lang, genders[it["ref_audio"]], cache)
+            base = self.ctx.work / "native" / lang / (it["key"].replace("|", "_").replace(":", "_") + ".wav")
+            base.parent.mkdir(parents=True, exist_ok=True)
+            gen.append(it | {"text": NV.fix_punct(it["text"], lang), "ref_audio": ref, "ref_text": ref_text,
+                             "speed": engine.get("native_speed", 1.0), "out": str(base.resolve()),
+                             "final": str(Path(it["out"]).resolve()), "target": str(Path(it["ref_audio"]).resolve())})
+        return gen
+
+    def _convert(self, lang: str, gen: list[dict], engine: dict) -> None:
+        """Seed-VC (Whisper-small model): each native take into its character's voice."""
+        from .bakeoff import TTS, pip
+
+        items = [{"key": g["key"], "source": g["out"], "target": g["target"], "out": g["final"]}
+                 for g in gen if Path(g["out"]).exists()]
+        if not items:
+            return
+        svc = NV.seedvc_checkout(self.ctx.work, cache_dir("seed-vc-checkpoints"), lambda *s: pip(self.ctx, *s), self.log)
+        self._free_models()
+        t = time.time()
+        parts = self._split(items)
+        self.log(f"converting {len(items)} {lang} takes into the characters' voices with Seed-VC"
+                 + (f" on {len(parts)} GPUs" if len(parts) > 1 else ""))
+        cmds = []
+        for i, part in enumerate(parts):
+            man = (self.ctx.work / f"svc_{lang}_{i}.json").resolve()
+            man.write_text(json.dumps(part, ensure_ascii=False), encoding="utf-8")
+            cmds.append(NV.convert_cmd(TTS, svc, man, (self.ctx.work / f"svc_{lang}_{i}_res.json").resolve(),
+                                       int(engine.get("vc_steps", 25))))
+        self._side_by_side(cmds, timeout=6 * 3600)
+        missing = sum(1 for it in items if not Path(it["out"]).exists())
+        self.log(f"converted {len(items) - missing} takes in {time.time() - t:.0f} s"
+                 + (f"; {missing} failed (see the log above)" if missing else ""))
 
     # ---- mix (CPU) -------------------------------------------------------------------------
     def mix(self) -> None:

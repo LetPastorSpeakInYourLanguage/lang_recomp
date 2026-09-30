@@ -90,6 +90,10 @@ local disks); then teams working on shared metadata with distributed compute.*
 - [ ] **SCALE 6** Generated audio on Cloudflare R2 behind a storage interface (signed URLs via an edge function); Telegram only as optional "publish to channel".
 - [ ] **SCALE 7** Translation bake-off on Colab (llama.cpp): NLLB-3.3B vs TranslateGemma-12B vs Gemma 4, scored by AfriCOMET-QE + people; then the Fit step (timing-aware shortening, manual pick).
 - [ ] **SCALE 8** OmniVoice reference 6–10 s (today ~12–20 s, `banks.TARGET_S`), best-of-N reference by held-out score.
+- [x] **VOICE** Voice-path test on the camille clip (`spikes/voice_paths`, Colab T4, 2026-09-30): OmniVoice cloning vs native speech + Seed-VC; the owner chose native + Seed-VC Whisper by ear → decision 46, the default for Amharic.
+- [ ] **VOICE** First real run with the native path (a 6ME video + a sermon); owner listens; check the takes' loudness after conversion.
+- [ ] **VOICE** Native voices for more languages: FLEURS has gender-labelled native speakers for ~100 languages (Oromo, Tigrinya next); pick the native voice nearest the character's pitch.
+- [ ] **VOICE** Per-character path (native / clone) in the app; Seed-VC fine-tuned on a recurring speaker (~2 min on a T4) for likeness.
 - [ ] **RUN** Colab: overlap CPU and GPU in every phase (voice→mix per video, decode/VAD of the next group during Whisper).
 - [ ] **RUN** Mixing is CPU-bound: 136–138 s per 6-min video on Colab (2 vCPUs), one rubberband ffmpeg per line (`app/mix.py render`). Stretch lines in one ffmpeg pass or in-process; run mixing while the next video voices.
 - [ ] **RUN** Separation is the biggest fixed cost (~305 s per 6-min video on a T4, run #1): try separator `batch_size`, fp16 autocast, a lighter speech model; never separate a video twice (team-shared stems / cache).
