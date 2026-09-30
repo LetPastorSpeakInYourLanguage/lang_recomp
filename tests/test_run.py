@@ -140,6 +140,8 @@ def test_a_folder_run_goes_from_videos_to_dubbed_mp4s_and_the_app_opens_it(tmp_p
     assert (device / "runs" / r["run"] / "results").glob("*.lbwork")
     state = json.loads((device / "runs" / r["run"] / "state.json").read_text(encoding="utf-8"))
     assert all(v.get("mix") == "done" for v in state["sources"].values()), state
+    # every translation fitted, so no model was started to shorten any (decision 47)
+    assert json.loads((device / "runs" / r["run"] / "shorten.json").read_text(encoding="utf-8"))["tight"] == 0
 
     got = runs.open_results("colab", r["run"])
     assert len(got["sources"]["matched"]) == 2

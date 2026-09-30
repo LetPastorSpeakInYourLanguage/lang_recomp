@@ -25,7 +25,8 @@ STAGES = ["fetch", "transcribe", "translate", "voice", "mix"]
 VIDEO = {".mp4", ".mkv", ".webm", ".mov", ".m4v", ".avi", ".mp3", ".m4a", ".wav", ".flac", ".ogg", ".opus"}
 SUBS = (".srt", ".vtt")
 DEFAULTS = {"dub_limit": None, "captions_download": 0, "captions_align": 0, "align_subtitles": True,
-            "height": 720, "takes": 1, "asr_model": "large-v3", "assume_checked": True, "mix_threads": 2}
+            "height": 720, "takes": 1, "asr_model": "large-v3", "assume_checked": True, "mix_threads": 2,
+            "shorten": True}  # lines too long to fit get shorter English from a local model (decision 47)
 
 
 def _root(root_id: str) -> Path:

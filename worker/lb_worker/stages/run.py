@@ -483,6 +483,32 @@ class Run:
             self.mark(self.uid[pid], "translate", "done")
             if (k + 1) % 25 == 0:
                 self.log(f"translated {k + 1}/{len(self.pids)}")
+        if self.opt.get("shorten", True) and not self.ctx.cancelled():
+            self._shorten()
+
+    def _shorten(self) -> None:
+        """Lines whose translation cannot fit even at the mixer's hardest squeeze get shorter
+        English from a local model, translated again (lb_worker/shorten.py, decision 47)."""
+        from app.translate import fit
+
+        from .. import llm, shorten
+
+        A = self.app
+        path = self.opt.get("voice_path") or A.voice.ENGINE.get("path")
+
+        def rate_of(pid: str, lang: str) -> float:  # native speech has its own measured rate
+            native = NV.path_for(lang, path) == "native_vc"
+            return fit.rate_for(lang, None if native else A.project.rate(pid, lang))
+
+        self._free_models()  # Whisper, the aligner and pyannote are done; GPU 1 may still be separating
+        gpu = 0 if gpu_count() else None
+        model = self.opt.get("llm_model") or (llm.DEFAULT_MODEL if gpu is not None else llm.CPU_MODEL)
+        pids = [pid for pid in self.pids if A.db.row("SELECT 1 FROM sentences WHERE project_id=?", pid)]
+        t = time.time()
+        rep = shorten.run(pids, self.langs_of, rate_of, self.ctx.work / "llm", cache_dir("llama.cpp"), self.log,
+                          model=model, gpu=gpu)
+        _dump(self.dir / "shorten.json", rep)
+        self.state["timings"]["shorten"] = round(time.time() - t, 1)
 
     # ---- voice (heavy) ---------------------------------------------------------------------
     def dub_set(self) -> list[str]:

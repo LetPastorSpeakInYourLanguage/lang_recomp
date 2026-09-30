@@ -134,6 +134,9 @@ ALIGNERS = ""  #@param {type:"string"}
 #@markdown Word aligners per language (`lang=repo`), over the built-in ones for ~27 languages.
 VOICE = "native"  #@param ["native", "clone"]
 #@markdown `native`: each line is first spoken by a native speaker's voice (Amharic for now), then turned into the character's voice with Seed-VC, so pauses and rhythm are the language's own. `clone`: the character's voice is cloned straight from its English lines (the old way; languages without native voices always use it).
+SHORTEN_WITH_LLM = True  #@param {type:"boolean"}
+#@markdown On: a line whose translation is too long for the time the speaker takes (even at the mix's fastest) gets shorter English written by a local model on this machine (Gemma 4: E4B on a GPU, the smaller E2B on a CPU; downloaded once per session, ~5 GB), translated again; the version that fits and keeps the meaning is used, the others are kept for the app. Off: Google's translations as they are (quicker on a PC without a GPU).
+LLM_MODEL = "auto"  #@param ["auto", "gemma-4-e4b", "gemma-4-e2b"]
 CAPTIONS = 0  #@param {type:"integer"}
 ALIGN_CAPTIONS = 0  #@param {type:"integer"}
 #@markdown YouTube only: also take YouTube's captions for the first N videos, force-align the first M, and compare with Whisper.
@@ -159,7 +162,8 @@ else:
                            bucket=M['bucket'] if M['storage'] == 'bucket' else None, hf_token=M['token'],
                            dub_limit=DUB_LIMIT or None, limit=LIMIT or None, captions=CAPTIONS,
                            align_captions=ALIGN_CAPTIONS, asr_models=pairs(ASR_MODELS), aligners=pairs(ALIGNERS),
-                           options={**M['options'], 'voice_path': 'native_vc' if VOICE == 'native' else 'clone'})
+                           options={**M['options'], 'voice_path': 'native_vc' if VOICE == 'native' else 'clone',
+                                    'shorten': bool(SHORTEN_WITH_LLM), 'llm_model': None if LLM_MODEL == 'auto' else LLM_MODEL})
 """, form=True),
     cell("markdown", """
 ## Look at the results
