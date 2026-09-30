@@ -99,10 +99,10 @@ Everything is set in the **Settings** cell, the token and bucket included.
 
 CELLS = [
     cell("markdown", f"""
-# Lang-Bridge — dub a folder of videos
+# Lang-Bridge — dub videos from links or a folder
 
-Runs the whole pipeline — **fetch → transcribe → translate → voice → mix** — on a folder of
-videos and/or YouTube links, from any language into any languages, with no app needed.
+Runs the whole pipeline — **fetch → transcribe → translate → voice → mix** — on a list of
+links (videos, playlists, channels) and/or a folder of videos, from any language into any languages, with no app needed.
 The Lang-Bridge app can open the results to check, fix and listen.
 {INTRO}
 Safe to stop at any time: run again with the same settings to continue (or see RUN_FOLDER).
@@ -112,10 +112,10 @@ Guide: [{REPO}/tree/main/notebooks]({REPO}/tree/main/notebooks)
 #@title Settings
 STORAGE = "folder"  #@param ["folder", "bucket"]
 #@markdown `folder`: results go to OUTPUT. `bucket`: results are pushed to BUCKET after every stage (the app syncs them), and VIDEOS may be a folder inside the bucket.
+LINKS = ""  #@param {type:"string"}
+#@markdown Links to videos, playlists or channels (YouTube or any site yt-dlp supports), separated by spaces, or a `.txt` file with one link per line. **Links need no folder**: leave VIDEOS empty and they are downloaded here.
 VIDEOS = ""  #@param {type:"string"}
 #@markdown A folder of videos (subfolders are works; `name.srt` beside a video is used instead of transcribing). With STORAGE = bucket, a folder in the bucket (e.g. `videos/sermons`).
-YOUTUBE = ""  #@param {type:"string"}
-#@markdown YouTube video or playlist links, separated by spaces.
 LANGUAGE = "en"  #@param {type:"string"}
 #@markdown The videos' language (e.g. `en`, `tr`, `am`).
 TARGETS = "am"  #@param {type:"string"}
@@ -160,7 +160,7 @@ if RUN_FOLDER.strip():
     result = run_manifest(folder, hf_token=M['token'], bucket=M['bucket'])
 else:
     result = run_folder(videos, M['out'], LANGUAGE.strip(), TARGETS.split(), STAGES.split(),
-                        youtube=YOUTUBE.split() or None, dub_limit=DUB_LIMIT or None, limit=LIMIT or None,
+                        links=LINKS, dub_limit=DUB_LIMIT or None, limit=LIMIT or None,
                         captions=CAPTIONS, align_captions=ALIGN_CAPTIONS, hf_token=M['token'],
                         asr_models=pairs(ASR_MODELS), aligners=pairs(ALIGNERS), bucket=M['bucket'],
                         options=M['options'])
@@ -207,7 +207,7 @@ BUCKET = ""  #@param {type:"string"}
 from lb_worker import env
 from lb_worker.research import run_folder
 M = env.setup(RUNTIME, ROOT, DEVICE, 'bucket', '', BUCKET, HF_TOKEN)
-result = run_folder(None, M['out'], 'en', ['am'], name='E2E test', youtube={json.dumps(SIX_MINUTE[:2])},
+result = run_folder(None, M['out'], 'en', ['am'], name='E2E test', links={json.dumps(SIX_MINUTE[:2])},
                     bucket=M['bucket'], hf_token=M['token'], options=M['options'])
 """, form=True),
 ]

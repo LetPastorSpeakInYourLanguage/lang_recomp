@@ -59,7 +59,8 @@ Your projects, settings and exports are stored in `data/` inside the app folder
 
 Transcription, speaker detection, separation, cloned voices and mixing run in a notebook you
 start yourself: **[`notebooks/lang_bridge.ipynb`](notebooks/lang_bridge.ipynb)**. It dubs a
-folder of videos (and/or YouTube links) end to end with no app, and finds out where it runs
+list of links (videos, playlists, channels; no folder needed) and/or a folder of videos
+end to end with no app, and finds out where it runs
 by itself:
 
 - **Kaggle**: uses both GPUs of *GPU T4 x2*; keep results with `STORAGE = bucket`.
@@ -67,8 +68,8 @@ by itself:
 - **Your own machine** (Jupyter, Python ≥ 3.10): an NVIDIA GPU if there is one, otherwise the
   CPU; PyTorch and ffmpeg are installed if missing.
 
-Everything is typed in its **Settings** cell: `STORAGE` (folder or bucket), `VIDEOS`,
-`YOUTUBE`, `LANGUAGE`, `TARGETS`, `OUTPUT`, `BUCKET`, `HF_TOKEN`, `DEVICE` (auto / cpu /
+Everything is typed in its **Settings** cell: `STORAGE` (folder or bucket), `LINKS`,
+`VIDEOS`, `LANGUAGE`, `TARGETS`, `OUTPUT`, `BUCKET`, `HF_TOKEN`, `DEVICE` (auto / cpu /
 1 GPU / 2 GPUs). **Never share or commit the notebook with your token filled in.** Full
 guide: **[notebooks/README.md](notebooks/README.md)**.
 

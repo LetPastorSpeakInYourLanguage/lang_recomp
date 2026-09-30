@@ -30,7 +30,7 @@ def parse(js: dict) -> dict:
                 continue
             seen.add(vid)
             out.append({"id": vid, "title": e.get("title") or vid,
-                        "url": e.get("url") or f"https://www.youtube.com/watch?v={vid}",
+                        "url": e.get("url") or e.get("webpage_url") or f"https://www.youtube.com/watch?v={vid}",
                         "duration": e.get("duration"), "section": section or "Videos",
                         "live": e.get("live_status") in ("is_live", "is_upcoming")})
 

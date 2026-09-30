@@ -117,3 +117,41 @@ def test_a_run_folder_given_as_the_videos_continues_that_run(tmp_path, monkeypat
     monkeypatch.setattr(research, "run_manifest", lambda d, *a: got.append(d) or {"videos": 0})
     research.run_folder(str(tmp_path), tmp_path / "out")
     assert got == [str(tmp_path)]
+
+
+def test_links_need_no_folder(tmp_path, monkeypatch):
+    """Links alone make a run: a playlist expands into its videos (oldest first), a single
+    video keeps its id and title, a .txt file stands for the links in it, duplicates go."""
+    import json
+    import subprocess
+
+    listing = {"_type": "playlist", "title": "Talks", "entries": [
+        {"id": "new1", "title": "Newest", "url": "https://example.org/v/new1"},
+        {"id": "old1", "title": "Oldest", "url": "https://example.org/v/old1"}]}
+    single = {"id": "abc", "title": "One talk", "webpage_url": "https://vimeo.com/abc"}
+
+    def fake_run(cmd, **kw):
+        if "yt_dlp" in cmd and "-J" in cmd:
+            js = listing if "playlist" in cmd[-1] else single
+            return subprocess.CompletedProcess(cmd, 0, json.dumps(js), "")
+        raise AssertionError(cmd)
+
+    monkeypatch.setattr(research.subprocess, "run", fake_run)
+    monkeypatch.setattr(research, "_scratch", lambda: tmp_path / "scratch")
+    import lb_worker.deps as deps
+    monkeypatch.setattr(deps, "ensure", lambda *a, **k: None)
+    seen = {}
+    monkeypatch.setattr(research, "run_manifest", lambda d, *a, **k: seen.setdefault("dir", Path(d)) and {"videos": 0})
+    txt = tmp_path / "links.txt"
+    txt.write_text("# teachings\nhttps://vimeo.com/abc\n\nhttps://example.org/playlist?x=1\n", encoding="utf-8")
+    assert research.read_links(f"{txt} https://vimeo.com/abc") == ["https://vimeo.com/abc", "https://example.org/playlist?x=1"]
+    saved = (db.DATA, db.DB_PATH, settings.PATH)
+    try:
+        research.run_folder(None, tmp_path / "out", "en", ["am"], ["fetch"], links=[str(txt)])
+        man = json.loads((seen["dir"] / "manifest.json").read_text(encoding="utf-8"))
+        titles = [r["name"] for r in db.rows("SELECT name FROM projects ORDER BY position, created")]
+    finally:
+        db.DATA, db.DB_PATH, settings.PATH = saved
+        db._local.c = None
+    assert len(man["sources"]) == 3 and man["name"] == "Links"
+    assert titles == ["One talk", "Oldest", "Newest"]

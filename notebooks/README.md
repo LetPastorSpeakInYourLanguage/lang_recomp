@@ -2,7 +2,9 @@
 
 The heavy part of Lang-Bridge (fetching, transcription, speaker detection, voice separation,
 cloned voices, mixing) runs in a **notebook you start yourself**. It works with no app at all:
-give it a folder of videos or YouTube links, and it writes the dubbed videos. The Lang-Bridge
+give it links (videos, playlists, channels) and/or a folder of videos, and it writes the dubbed videos.
+**Links need no folder**: the notebook downloads them itself, so teams share work by link
+without copying media to each other. The Lang-Bridge
 app can open the results afterwards, to check, fix and listen.
 
 | File | What |
@@ -35,9 +37,9 @@ Colab's or Kaggle's secret stores.
 
 | Setting | What |
 |---|---|
+| `LINKS` | links to videos, playlists or channels (YouTube or any site yt-dlp supports), separated by spaces, or a `.txt` file with one link per line. No folder needed |
 | `STORAGE` | `folder`: results go to `OUTPUT`. `bucket`: results are pushed to `BUCKET` after every stage (and at the end); `VIDEOS` can then be a folder inside the bucket, downloaded first. |
 | `VIDEOS` | a folder of videos (subfolders are works, see [docs/LIBRARY_FOLDERS.md](../docs/LIBRARY_FOLDERS.md); `name.srt` beside a video is used instead of transcribing) |
-| `YOUTUBE` | video or playlist links, separated by spaces |
 | `LANGUAGE`, `TARGETS` | the videos' language and the languages to dub into, any direction |
 | `OUTPUT` | `STORAGE = folder`: where results go (on Colab, a Drive folder so they outlive the session). Empty: `lb-out` in `WORK_DIR` |
 | `BUCKET` | a [Hugging Face Storage Bucket](https://huggingface.co/docs/hub/en/storage-buckets), `namespace/name`. Needed for `STORAGE = bucket`; with a folder it is a backup |

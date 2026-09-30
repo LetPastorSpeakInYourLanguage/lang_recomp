@@ -100,18 +100,42 @@ def _scratch() -> Path:
     return d
 
 
-def _video_entry(link: str) -> dict:
-    """A single video link with its real id and title (the title names the work's source)."""
+def read_links(values: list[str] | str | None) -> list[str]:
+    """Links from the settings: separated by spaces or new lines; a ``.txt`` file among them
+    stands for the links in it (one per line, ``#`` for comments)."""
+    items = values.split() if isinstance(values, str) else list(values or [])
+    out: list[str] = []
+    for v in (x.strip() for x in items):
+        if not v:
+            continue
+        if v.lower().endswith(".txt") and Path(v).expanduser().is_file():
+            text = Path(v).expanduser().read_text(encoding="utf-8", errors="replace")
+            out += [ln.split()[0] for ln in text.splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
+        else:
+            out.append(v)
+    return list(dict.fromkeys(out))
+
+
+def expand_link(link: str, limit: int = 500) -> list[dict]:
+    """The videos behind a link, without downloading them: one for a video, all of them
+    (oldest first) for a playlist or a channel, on YouTube or any site yt-dlp knows."""
+    from app import feeds
+
     try:
-        p = subprocess.run([sys.executable, "-m", "yt_dlp", "--skip-download", "--no-playlist", "--no-warnings",
-                            "--print", "%(id)s\t%(title)s", "--", link], capture_output=True, text=True, timeout=120)
-        out = p.stdout.strip().splitlines()
-        if p.returncode == 0 and out and "\t" in out[-1]:
-            vid, title = out[-1].split("\t", 1)
-            return {"id": vid, "title": title, "url": link}
-    except (OSError, subprocess.TimeoutExpired):
-        pass
-    return {"id": link.rsplit("=", 1)[-1][-11:], "title": link, "url": link}
+        p = subprocess.run([sys.executable, "-m", "yt_dlp", "--flat-playlist", "-J", "--no-warnings",
+                            "--playlist-end", str(limit), "--", link],
+                           capture_output=True, text=True, encoding="utf-8", timeout=300)
+        js = json.loads(p.stdout) if p.returncode == 0 and p.stdout.strip() else None
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        js = None
+    if js is None:  # not listable now: keep the link; the fetch stage reports what is wrong
+        print(f"could not look up {link}; it is kept and fetched as it is", flush=True)
+        return [{"id": link.rsplit("=", 1)[-1][-11:], "title": link, "url": link}]
+    if js.get("_type") == "playlist" or js.get("entries") is not None:
+        entries = feeds.parse(js)["entries"]
+        print(f"{link}: {len(entries)} videos", flush=True)
+        return list(reversed(entries))  # oldest first
+    return [{"id": js.get("id") or link, "title": js.get("title") or link, "url": js.get("webpage_url") or link}]
 
 
 def secret(name: str) -> str | None:
@@ -232,15 +256,17 @@ def run_manifest(run_dir: str | Path, hf_token: str | None = None, cache: str | 
 
 
 def run_folder(videos: str | Path | None, output: str | Path, language: str = "en", targets: list[str] | None = None,
-               stages: list[str] | None = None, youtube: list[str] | None = None, name: str | None = None,
+               stages: list[str] | None = None, links: list[str] | str | None = None, name: str | None = None,
                dub_limit: int | None = None, limit: int | None = None, takes: int = 1, captions: int = 0,
                align_captions: int = 0, align_subtitles: bool = True, hf_token: str | None = None,
                cache: str | Path | None = None, aligners: dict | None = None, options: dict | None = None,
-               asr_models: dict | None = None, bucket: str | None = None) -> dict:
-    """Run the pipeline over a folder of videos and/or YouTube links; results in ``output``.
+               asr_models: dict | None = None, bucket: str | None = None, youtube: list[str] | None = None) -> dict:
+    """Run the pipeline over a folder of videos and/or links; results in ``output``.
 
     videos     a folder (searched recursively); ``name.srt`` beside a video is its transcript
-    youtube    video or playlist links (downloaded into ``output``)
+    links      links to videos, playlists or channels (YouTube or any site yt-dlp knows), or
+               a .txt file of them; no folder is needed: the videos are downloaded into
+               ``output`` (``youtube`` is the old name of this argument)
     stages     which of fetch, transcribe, translate, voice, mix (default: all)
     dub_limit  voice and mix only the first N videos (the rest are transcribed/translated)
     limit      take only the first N videos at all
@@ -276,7 +302,8 @@ def run_folder(videos: str | Path | None, output: str | Path, language: str = "e
         "aligners": {**asr.DEFAULT_ALIGNERS, **settings.DEFAULTS["aligners"], **(aligners or {})}}),
         encoding="utf-8")
 
-    title = name or (Path(videos).name if videos else "YouTube")
+    links = read_links(links) + read_links(youtube)
+    title = name or (Path(videos).name if videos else "Links")
     pids: list[str] = []
     if videos:
         folder = Path(videos)
@@ -290,21 +317,16 @@ def run_folder(videos: str | Path | None, output: str | Path, language: str = "e
             s = series.create(title, "other", language, targets)
             pids += runs.folder_sources(s["id"], str(folder), "here")
             print(f"{len(pids)} videos found in {folder}")
-    if youtube:
+    if links:
         from .deps import ensure
 
         ensure("yt-dlp", probe="yt_dlp")  # listing playlists happens before any stage installs it
         s = series.create(title, "channel", language, targets)
-        for link in youtube:
-            link = link.strip()
-            if not link:
-                continue
-            entries = feeds.listing(link, 500)["entries"] if ("list=" in link or "/@" in link or "/channel/" in link) \
-                else [_video_entry(link)]
-            for e in reversed(entries):  # oldest first
+        for link in links:
+            for e in expand_link(link):
                 try:
                     pids.append(series.add_source(s["id"], e["title"][:120], e["url"], origin_id=e["id"], defer=True)["id"])
-                except ValueError:
+                except ValueError:  # the same video twice
                     pass
         print(f"{len(pids)} videos to work on")
     if limit:
