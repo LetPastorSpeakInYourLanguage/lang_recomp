@@ -49,7 +49,7 @@ export default function Translate({ project, state, onChanged }: { project: Proj
   // Lines grouped under their chapter, in time order (chapters without lines are skipped).
   const chapters = (chaps.data ?? []).map((c) => ({ c, lines: rows.filter((s) => s.chapter === c.id) })).filter((g) => g.lines.length);
   const done = rows.filter((r) => r.tr).length;
-  const over = rows.filter((r) => (r.budget?.ratio ?? 0) > 1.25).length;
+  const over = rows.filter((r) => r.fit?.tight).length;
 
   return (
     <div className="p-16 max-w-[1280px] mx-auto w-full flex flex-col gap-12">
@@ -74,7 +74,7 @@ export default function Translate({ project, state, onChanged }: { project: Proj
           </div>
         </div>
         <Tag tone={done === rows.length ? "good" : "neutral"}>{done}/{rows.length} translated</Tag>
-        {over > 0 && <Tag tone="warn" title={`Estimated ${langName(lang)} length is over 125% of the source slot`}>{over} too long</Tag>}
+        {over > 0 && <Tag tone="warn" title={`Estimated ${langName(lang)} length needs more than a 1.25× speed-up to fit between its neighbours`}>{over} too long</Tag>}
         {err && <span className="text-11 text-bad">{err}</span>}
         <Button variant="primary" disabled={running} onClick={() => void translate()}>
           <RefreshCw size={11} className={running ? "animate-spin" : ""} />{running ? "Translating…" : done ? "Re-translate unlocked" : "Translate all"}
@@ -100,8 +100,9 @@ function Line({ s, c, project, lang, pivot, onPatch }: {
 }) {
   const [draft, setDraft] = useState(s.tr);
   useEffect(() => setDraft(s.tr), [s.tr]);
-  const r = s.budget?.ratio ?? null;
-  const tone = r == null ? "bg-faint" : r <= 1.05 ? "bg-good" : r <= 1.25 ? "bg-warn" : "bg-bad";
+  // the speed-up the line would need in its window: up to 1.12 is free, to 1.25 squeezed, beyond it overflows
+  const r = s.fit?.need ?? null;
+  const tone = r == null ? "bg-faint" : r <= 1.12 ? "bg-good" : r <= 1.25 ? "bg-warn" : "bg-bad";
   return (
     <div className="grid grid-cols-[130px_1fr_1.2fr_150px] gap-10 px-12 py-8 items-start max-lg:grid-cols-[1fr]">
       <div className="flex items-center gap-6 min-w-0 pt-2">
@@ -129,12 +130,14 @@ function Line({ s, c, project, lang, pivot, onPatch }: {
             className="field h-auto py-4 font-eth text-14 leading-relaxed resize-none w-full" />
         )}
         {addressesSomeone(s.text) && s.tr && <span className="text-10 text-warn">Check the “you” form matches who is being spoken to.</span>}
+        {s.options.length > 0 && !s.linked && <Versions s={s} lang={lang} onUse={(text) => onPatch({ tr: text })} />}
       </div>
       <div className="flex flex-col gap-4 pt-3">
         <div className="flex items-center gap-6">
           <div className="flex-1 h-5 bg-panel3 rounded-full overflow-hidden relative">
-            <div className={`h-full ${tone}`} style={{ width: `${Math.min(100, (r ?? 0) * 80)}%` }} />
-            <div className="absolute top-0 bottom-0 w-px bg-text opacity-40" style={{ left: "80%" }} title="fits the slot" />
+            <div className={`h-full ${tone}`} style={{ width: `${Math.min(100, (r ?? 0) * 64)}%` }} />
+            <div className="absolute top-0 bottom-0 w-px bg-text opacity-40" style={{ left: `${1.12 * 64}%` }} title="fits (up to 1.12× faster)" />
+            <div className="absolute top-0 bottom-0 w-px bg-bad opacity-60" style={{ left: `${1.25 * 64}%` }} title="the mix's hardest squeeze (1.25×)" />
           </div>
           <button onClick={() => onPatch({ tr_locked: !s.tr_locked })} title={s.tr_locked ? "Locked — re-translate skips it" : "Unlocked"}
             className={`bg-transparent border-0 p-0 ${s.tr_locked ? "text-accent" : "text-faint"}`}>
@@ -143,8 +146,36 @@ function Line({ s, c, project, lang, pivot, onPatch }: {
         </div>
         <span className="text-9.5 font-mono text-faint">
           {s.budget ? `${s.budget.syllables} syl · ~${s.budget.est_s}s / ${s.slot_s.toFixed(1)}s` : `${s.slot_s.toFixed(1)}s slot`}
+          {r != null && ` · ${r.toFixed(2)}×`}
         </span>
       </div>
+    </div>
+  );
+}
+
+const VERSION_LABEL = { google: "As translated", short_a: "Shorter English", short_b: "Shortest English" } as const;
+
+/** A line whose first translation was too long for its place: Google's own and Google's
+ *  translation of shorter English written by the run's local model (decision 47). */
+function Versions({ s, lang, onUse }: { s: Sentence; lang: string; onUse: (text: string) => void }) {
+  return (
+    <div className="flex flex-col gap-4 border-l-2 border-border2 pl-8 mt-2">
+      <span className="text-10 text-faint">Too long to fit as first translated: shorter versions</span>
+      {s.options.map((o) => {
+        const inUse = o.text === s.tr;
+        return (
+          <div key={o.kind} className="flex items-start gap-6">
+            <div className="flex-1 min-w-0">
+              <div lang={lang} className={`font-eth text-12.5 leading-relaxed ${inUse ? "" : "text-dim"}`}>{o.text}</div>
+              <div className="text-10 text-faint">{VERSION_LABEL[o.kind]} · {o.source_text}</div>
+            </div>
+            <span className="text-9.5 font-mono text-faint whitespace-nowrap pt-2" title="speed-up it needs to fit · meaning of the English kept">
+              {o.need != null ? `${o.need.toFixed(2)}×` : "–"}{o.kind !== "google" && o.sim != null ? ` · ${Math.round(o.sim * 100)}%` : ""}
+            </span>
+            {inUse ? <Tag tone="good">in use</Tag> : <Button variant="ghost" onClick={() => onUse(o.text)}>Use</Button>}
+          </div>
+        );
+      })}
     </div>
   );
 }

@@ -139,6 +139,10 @@ export interface MixState {
 }
 
 export interface Budget { syllables: number; est_s: number; slot_s: number; ratio: number | null; max_syllables: number }
+export interface TranslationOption {
+  kind: "google" | "short_a" | "short_b"; text: string; source_text: string; need: number | null; sim: number | null;
+}
+
 export interface Sentence {
   id: number; speaker: string | null; start: number; end: number; slot_s: number; text: string;
   /** translation into `lang` */
@@ -147,6 +151,10 @@ export interface Sentence {
   linked: { clip_id: number; title: string; kind: ClipKind; source_id: string; source_name: string | null; line_id: number | null } | null;
   /** id of the chapter holding the line; `chapter_head` marks the first line of a later chapter */
   chapter: number; chapter_head: number; reviewed: number; budget: Budget | null;
+  /** predicted speed-up the line needs in its window (neighbours included); tight = over the mix's hardest squeeze */
+  fit: { need: number; tight: boolean } | null;
+  /** when the translation was too long: Google's own and Google's translation of shorter English */
+  options: TranslationOption[];
   /** effective: the person's choice, else the interjection suggestion */
   mode: "dub" | "keep"; mode_set: "dub" | "keep" | null; mode_suggested: "dub" | "keep";
 }
