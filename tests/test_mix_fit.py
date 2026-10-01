@@ -35,9 +35,23 @@ def test_stretch_levels():
     assert over["status"] == "overflow" and over["factor"] == DEFAULTS["hard_stretch"] and over["overlap_s"] > 0
 
 
-def test_lines_never_start_before_the_previous_one_ends():
-    ps = fit([L(1, 0.0, 1.0, 1.9), L(2, 1.2, 2.0, 0.5)], 10, DEFAULTS)
+def test_a_line_starts_early_only_after_the_previous_take_has_ended():
+    ps = fit([L(1, 0.0, 1.0, 1.0), L(2, 1.2, 2.0, 1.2), L(3, 2.2, 3.0, 0.5)], 10, DEFAULTS)
     assert ps[1]["start"] >= ps[0]["end"] + GAP_S - 1e-9
+
+
+def test_a_take_too_long_plays_under_the_next_line_instead_of_delaying_it():
+    ps = fit([L(1, 0.0, 1.0, 1.9), L(2, 1.2, 2.0, 0.5)], 10, DEFAULTS)
+    assert ps[0]["status"] == "overflow" and ps[0]["end"] > 1.2
+    assert ps[1]["start"] == 1.2  # its own onset, under the end of the first take
+
+
+def test_the_dub_never_drifts_behind_the_picture():
+    # every take half as long again as its line, back to back: before, each one pushed the rest later
+    lines = [L(i, 2.0 * i, 2.0 * i + 1.8, 2.7) for i in range(30)]
+    ps = fit(lines, 70, DEFAULTS)
+    assert all(pl["start"] <= ln["start"] + 1e-9 for pl, ln in zip(ps, lines))
+    assert ps[-1]["end"] < lines[-1]["end"] + 1.5
 
 
 def test_speech_level_ignores_pauses():

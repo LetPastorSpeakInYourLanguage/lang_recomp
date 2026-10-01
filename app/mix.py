@@ -4,7 +4,10 @@ Fit: every dubbed line starts where the original line started (lip onset). A tak
 longer than its slot first borrows the silence after it (and up to LEAD_S before it),
 then is time-compressed with rubberband (formants preserved): freely up to
 ``max_stretch``, flagged up to ``hard_stretch``, beyond that it overflows into the
-next line and is reported. Loudness follows the original line, so shouted lines stay
+next line and is reported. No line ever starts after its own onset: a take still too
+long keeps playing under the next line rather than delaying it, so the dub never drifts
+behind the picture (owner, 2026-10-01: before, one overflow delayed every later line and
+the first 6 Minute English dubs ended 15-33 s late). Loudness follows the original line, so shouted lines stay
 loud and asides stay quiet.
 
 Mix: background stem, lightly ducked under the dub; extras (characters not marked
@@ -74,7 +77,8 @@ def fit(lines: list[dict], total_s: float, p: dict) -> list[dict]:
     out, prev_end = [], -GAP_S  # the first line has nothing before it to keep clear of
     for i, ln in enumerate(lines):
         nxt = lines[i + 1]["start"] if i + 1 < len(lines) else total_s
-        win_lo = max(0.0, prev_end + GAP_S, ln["start"] - LEAD_S)
+        # it may start a little early into a pause, never into the previous take, never late
+        win_lo = min(ln["start"], max(0.0, prev_end + GAP_S, ln["start"] - LEAD_S))
         win_hi = max(win_lo + 0.05, nxt - GAP_S)
         onset = max(ln["start"], win_lo)
         d, slot = ln["dur"], ln["end"] - ln["start"]
