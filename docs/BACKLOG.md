@@ -36,6 +36,7 @@ local disks); then teams working on shared metadata with distributed compute.*
 - [ ] **WS P2** Workspace protocol v1 (`lb_core/workspace/`): schema, identity uids, config conflicts, manual over auto, hashes/staleness, tasks, ownership.
 - [ ] **WS P4** Pipeline on the workspace (stale-only, hash-named takes, dubs/ output); retire the job queue and old stages.
 - [x] **WS P5a** Lines too long to fit get shorter English from Gemma 4 on llama.cpp, translated again; versions stored and chosen in the Translate screen (decision 47, [SHORTEN.md](SHORTEN.md), branch `feat/shorten`).
+- [x] **WS P3a** `YT_COOKIES` in the notebooks: YouTube refused Colab's address on the first shortening test (2026-10-01); every yt-dlp call uses a private copy of the person's cookies.txt; guide in notebooks/README.md.
 - [ ] **WS P5a** Owner's Colab run: about 3 episodes of 6 Minute English with SHORTEN_WITH_LLM on and off; compare `shorten.json`, `fit.json` overflow, tokens/s; listen; set `MIN_SIM` from the meaning scores.
 - [ ] **WS P5b** A rescue pass after voicing for lines whose real take still overflows (measured, not predicted).
 - [ ] **WS P5c** Target-side shortening for chosen languages (built into the plan, off everywhere); Amharic after E3.
