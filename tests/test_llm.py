@@ -121,6 +121,7 @@ def test_answers_follow_the_schema_and_tokens_are_counted(tmp_path, monkeypatch)
     assert sent[0]["response_format"]["json_schema"]["schema"] == schema
     assert sent[0]["chat_template_kwargs"] == {"enable_thinking": False}
     assert s.proc is None  # stopped on leaving
+    assert s.chat("hi", full=True) == {"text": '{"ok": true}', "finish": None}
 
 
 def test_one_failed_request_does_not_stop_the_others(tmp_path):

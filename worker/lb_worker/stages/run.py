@@ -507,7 +507,7 @@ class Run:
         pids = [pid for pid in self.pids if A.db.row("SELECT 1 FROM sentences WHERE project_id=?", pid)]
         t = time.time()
         rep = shorten.run(pids, self.langs_of, rate_of, self.ctx.work / "llm", cache_dir("llama.cpp"), self.log,
-                          model=model, gpu=gpu)
+                          model=model, gpu=gpu, raw_log=self.dir / "shorten_raw.jsonl")
         _dump(self.dir / "shorten.json", rep)
         self.state["timings"]["shorten"] = round(time.time() - t, 1)
 
@@ -669,7 +669,11 @@ class Run:
         for it in todo:
             if it["ref_audio"] not in genders:
                 genders[it["ref_audio"]] = NV.gender_of(it["ref_audio"])
-                self.log(f"{Path(it['ref_audio']).stem}: {genders[it['ref_audio']]} native {lang} voice")
+                # banks live in banks/<video uid>/: the same diarizer label is another person in another video
+                video = next((self.app.project.get(p)["name"] for p, u in self.uid.items()
+                              if u == Path(it["ref_audio"]).parent.name), Path(it["ref_audio"]).parent.name)
+                self.log(f"{video[:40]} · {Path(it['ref_audio']).stem.removeprefix('bank_')}: "
+                         f"{genders[it['ref_audio']]} native {lang} voice")
             ref, ref_text = NV.voice_ref(lang, genders[it["ref_audio"]], cache)
             base = self.ctx.work / "native" / lang / (it["key"].replace("|", "_").replace(":", "_") + ".wav")
             base.parent.mkdir(parents=True, exist_ok=True)

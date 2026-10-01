@@ -21,6 +21,8 @@ Google's translations. The model's word counts are never trusted: everything is 
 from __future__ import annotations
 
 import hashlib
+import json
+import re
 import threading
 import time
 from pathlib import Path
@@ -34,11 +36,29 @@ EMBEDDER = "sentence-transformers/all-mpnet-base-v2"
 SYSTEM = """You shorten lines of a spoken transcript so they can be dubbed into another language: the translation of each marked line takes longer to say than the speaker took.
 Rewrite each marked line in plain English, shorter, keeping what it means: drop filler, repetition and what the lines around it already say, and prefer short words.
 Keep every name, number and Bible reference. Each version must be a complete sentence (or sentences) in the same person, tense and tone as the original, and must follow on from the line before it.
-Write two versions of each marked line: "a" with no more words than its limit a, and "b" with no more words than its limit b."""
+Write two versions of each marked line: "a" with no more words than its limit a, and "b" with no more words than its limit b.
+Answer with exactly two lines per marked line and nothing else, like this:
+12a: <version a of line 12>
+12b: <version b of line 12>"""
 
-SCHEMA = {"type": "object", "required": ["lines"], "properties": {"lines": {"type": "array", "items": {
-    "type": "object", "required": ["id", "a", "b"],
-    "properties": {"id": {"type": "integer"}, "a": {"type": "string"}, "b": {"type": "string"}}}}}}
+# One answer line: "12a: text", tolerating "[12*] a -", "**12b.**" and the like.
+_ANSWER = re.compile(r"^\[?(\d+)\*?\]?\s*([ab])\s*[:.)\-–—]\s*(.+)$", re.IGNORECASE)
+RETRY_CHUNK = 3  # lines left unanswered are asked again, a few at a time
+
+
+def parse_answer(text: str, ids) -> dict[int, dict[str, str]]:
+    """The versions in a model's answer, for the lines asked about; plain lines, so an
+    answer cut short still gives every line it finished."""
+    want, out = set(ids), {}
+    for raw in (text or "").splitlines():
+        line = raw.strip().replace("**", "").lstrip("*-• ").strip()
+        m = _ANSWER.match(line)
+        if not m or int(m.group(1)) not in want:
+            continue
+        v = m.group(3).strip().strip('"“”').strip()
+        if v and not v.startswith("<version"):  # not the format's own placeholder
+            out.setdefault(int(m.group(1)), {})[m.group(2).lower()] = v
+    return {k: v for k, v in out.items() if v.get("a")}
 
 
 def basis(model: str, text: str, caps: tuple[int, int]) -> str:
@@ -88,11 +108,12 @@ class Embedder:
 
 
 def run(pids: list[str], langs_of, rate_of, work: Path, cache: Path, log=print, model: str = llm.DEFAULT_MODEL,
-        gpu: int | None = 0, server=None, similarity=None, translator=None) -> dict:
+        gpu: int | None = 0, server=None, similarity=None, translator=None, raw_log: Path | None = None) -> dict:
     """Shorten the tight lines of these videos in their languages. ``langs_of(pid)`` lists a
     video's target languages, ``rate_of(pid, lang)`` the voice's syllables per second.
     ``server``, ``similarity`` and ``translator`` stand in for the model, the embedder and
-    Google (tests). Returns the report written to the run folder."""
+    Google (tests). ``raw_log`` keeps every answer as it came (JSON lines). Returns the
+    report written to the run folder."""
     from app import chapters, project
     from app.translate import fit
 
@@ -140,6 +161,7 @@ def run(pids: list[str], langs_of, rate_of, work: Path, cache: Path, log=print, 
                              "caps": {sid: caps[sid] for sid in part}, "need": {sid: todo[sid] for sid in part},
                              "text": {sid: by_id[sid]["text"] for sid in part}})
     n = sum(len(j["caps"]) for j in jobs)
+    job_of = {(j["pid"], sid): j for j in jobs for sid in j["caps"]}
     if not n:
         log(f"shortening: no line is too long to fit ({rep['tight']} tight, all done before)" if rep["tight"]
             else "shortening: every translation fits its place")
@@ -148,29 +170,57 @@ def run(pids: list[str], langs_of, rate_of, work: Path, cache: Path, log=print, 
     # 2. the model writes shorter English for every tight line in one session
     log(f"shortening {n} lines that are too long to fit, in {len(jobs)} requests, with {llm.MODELS[model]['name']}")
     sim = similarity or Embedder()
-    srv = server or llm.Server(model, work, cache=cache, gpu=gpu, log=log)
+    srv = server or llm.Server(model, work, cache=cache, gpu=gpu, slots=8 if gpu is not None else 2, log=log)
+    raw = open(raw_log, "w", encoding="utf-8") if raw_log else None
+    raw_lock = threading.Lock()
+
+    def ask(j):
+        a = srv.chat([{"role": "system", "content": SYSTEM},
+                      {"role": "user", "content": prompt(j["title"], j["lines"], j["caps"])}],
+                     max_tokens=120 * len(j["caps"]) + 200, full=True)
+        got = parse_answer(a["text"], j["caps"])
+        if raw:
+            with raw_lock:
+                raw.write(json.dumps({"ids": list(j["caps"]), "finish": a.get("finish"), "got": len(got),
+                                      "answer": a["text"]}, ensure_ascii=False) + "\n")
+        return got
+
+    versions: dict[tuple[str, int], dict[str, str]] = {}
+    why: list[str] = []
     t1 = time.time()
     try:
         with srv:
-            answers = srv.map(lambda j: srv.chat([{"role": "system", "content": SYSTEM},
-                                                  {"role": "user", "content": prompt(j["title"], j["lines"], j["caps"])}],
-                                                 SCHEMA, max_tokens=80 * len(j["caps"]) + 60), jobs)
+            for attempt in (1, 2):
+                answers = srv.map(ask, jobs)
+                left = []
+                for j, ans in zip(jobs, answers):
+                    if isinstance(ans, Exception):
+                        why.append(f"{type(ans).__name__}: {str(ans)[:160]}")
+                        ans = {}
+                    for sid in j["caps"]:
+                        if sid in ans:
+                            versions[(j["pid"], sid)] = {"short_a": ans[sid]["a"], "short_b": ans[sid].get("b", "")}
+                    missing = [sid for sid in j["caps"] if sid not in ans]
+                    for k in range(0, len(missing), RETRY_CHUNK):  # asked again in smaller requests
+                        part = missing[k:k + RETRY_CHUNK]
+                        left.append(j | {"caps": {sid: j["caps"][sid] for sid in part}})
+                if not left or attempt == 2:
+                    break
+                log(f"asking again for {sum(len(j['caps']) for j in left)} lines the model did not answer")
+                jobs = left
     except Exception as e:
         log(f"shortening skipped: {str(e)[-400:]}")
         rep.update(error=str(e)[-400:], seconds=round(time.time() - t0, 1))
         return rep
+    finally:
+        if raw:
+            raw.close()
+    rep["failed"] = n - len(versions)
+    if why:
+        rep["errors"] = sorted(set(why))[:5]
+        log("some requests failed: " + " | ".join(rep["errors"][:3]))
     gen_s = time.time() - t1
     rep.update(llm_seconds=round(gen_s, 1), tokens=srv.tokens, tokens_per_s=round(srv.tokens / gen_s, 1) if gen_s else None)
-    versions: dict[tuple[str, int], dict[str, str]] = {}
-    for j, ans in zip(jobs, answers):
-        got = {} if isinstance(ans, Exception) else {x.get("id"): x for x in ans.get("lines", []) if isinstance(x, dict)}
-        for sid in j["caps"]:
-            v = got.get(sid)
-            if not v or not (v.get("a") or "").strip():
-                rep["failed"] += 1
-                continue
-            versions[(j["pid"], sid)] = {"short_a": v["a"].strip(), "short_b": (v.get("b") or "").strip()}
-    job_of = {(j["pid"], sid): j for j in jobs for sid in j["caps"]}
     # 3. meaning kept (English against English) and 4. the versions in every language
     keys = [(k, kind) for k, v in versions.items() for kind, text in v.items() if text]
     sims = dict(zip(keys, sim([(job_of[k]["text"][k[1]], versions[k][kind]) for k, kind in keys])))
@@ -207,6 +257,6 @@ def run(pids: list[str], langs_of, rate_of, work: Path, cache: Path, log=print, 
                 project.set_translation(pid, sid, lang, pick["text"], provenance="machine")
     rep["seconds"] = round(time.time() - t0, 1)
     log(f"shortened: {rep['fits']} now fit, {rep['closer']} closer, {rep['too_long']} still too long"
-        + (f", {rep['failed']} not answered" if rep["failed"] else "")
+        + (f", {rep['failed']} not answered (see shorten_raw.jsonl)" if rep["failed"] else "")
         + f" ({rep['seconds']:.0f} s; the model {rep['llm_seconds']:.0f} s at {rep['tokens_per_s'] or 0:.0f} tokens/s)")
     return rep

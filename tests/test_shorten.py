@@ -39,8 +39,8 @@ def fresh(tmp_path, monkeypatch):
 
 
 class Server:
-    def __init__(self, fail=False):
-        self.prompts, self.starts, self.tokens, self.fail = [], 0, 0, fail
+    def __init__(self, fail=False, skip=()):
+        self.prompts, self.starts, self.tokens, self.fail, self.skip = [], 0, 0, fail, set(skip)
 
     def __enter__(self):
         self.starts += 1
@@ -54,11 +54,15 @@ class Server:
     def map(self, fn, items):
         return [fn(x) for x in items]
 
-    def chat(self, messages, schema, max_tokens=0):
+    def chat(self, messages, schema=None, max_tokens=0, full=False):
         user = messages[-1]["content"]
         self.prompts.append(user)
         self.tokens += 10
-        return {"lines": [{"id": int(i), "a": "Short.", "b": "Tiny."} for i in re.findall(r"\[(\d+)\*\]", user)]}
+        ids = [int(i) for i in re.findall(r"\[(\d+)\*\]", user)]
+        if len(self.prompts) == 1:  # the first answer leaves out some lines (cut short)
+            ids = [i for i in ids if i not in self.skip]
+        text = "Sure:\n" + "".join(f"{i}a: Short.\n**{i}b:** Tiny.\n" for i in ids)
+        return {"text": text, "finish": "stop"}
 
 
 class Google:
@@ -76,10 +80,10 @@ def sims(pairs):
     return [0.9 if short == "Short." else 0.5 for _, short in pairs]
 
 
-def go(server, langs=("am",), sim=sims):
+def go(server, langs=("am",), sim=sims, raw_log=None):
     Google.calls = []
     return shorten.run(["p"], lambda pid: list(langs), lambda pid, lang: 6.0, Path("w"), Path("c"),
-                       log=lambda *a: None, server=server, similarity=sim, translator=Google)
+                       log=lambda *a: None, server=server, similarity=sim, translator=Google, raw_log=raw_log)
 
 
 def test_only_lines_that_cannot_fit_are_shortened_and_people_are_never_overruled(fresh):
@@ -144,3 +148,18 @@ def test_the_prompt_marks_lines_with_their_word_limits():
     text = shorten.prompt("Hope", [{"id": 1, "text": "Hi.", "speaker": "A"}, {"id": 2, "text": "Long line here."}], {2: (5, 3)})
     assert text.startswith("Chapter: Hope") and "[1] (A) Hi." in text
     assert "[2*] Long line here.   <- rewrite: a at most 5 words, b at most 3 words" in text
+
+
+def test_lines_the_model_left_out_are_asked_again_and_every_answer_is_kept(fresh):
+    srv = Server(skip={6})
+    rep = go(srv, raw_log=fresh / "raw.jsonl")
+    assert len(srv.prompts) == 2 and "[6*]" in srv.prompts[1] and "[1*]" not in srv.prompts[1]
+    assert rep["fits"] == 2 and rep["failed"] == 0
+    raw = [__import__("json").loads(x) for x in (fresh / "raw.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert [r["got"] for r in raw] == [1, 1] and raw[0]["finish"] == "stop"
+
+
+def test_answers_are_read_from_plain_lines_in_any_usual_form():
+    got = shorten.parse_answer("Here you go:\n12a: Short one.\n**12b:** Tiny.\n[13*] a - Other\n13b) x\n"
+                               "99a: not asked\n14a: <version a of line 14>", [12, 13, 14])
+    assert got == {12: {"a": "Short one.", "b": "Tiny."}, 13: {"a": "Other", "b": "x"}}

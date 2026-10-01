@@ -198,8 +198,11 @@ class Server:
             return "(no server log)"
 
     def chat(self, messages: list[dict] | str, schema: dict | None = None, max_tokens: int = 1024,
-             temperature: float = 0.3):
-        """One answer; with ``schema`` the answer is JSON of that shape, parsed."""
+             temperature: float = 0.3, full: bool = False):
+        """One answer; with ``schema`` the answer is JSON of that shape, parsed (a JSON grammar
+        slows the large Gemma vocabulary down and can run into endless whitespace: plain text
+        parsed by the caller is the faster choice). ``full``: {text, finish} (finish
+        "length" = cut off at max_tokens)."""
         if isinstance(messages, str):
             messages = [{"role": "user", "content": messages}]
         body = {"messages": messages, "temperature": temperature, "max_tokens": max_tokens,
@@ -211,7 +214,10 @@ class Server:
         data = r.json()
         with self.lock:
             self.tokens += int((data.get("usage") or {}).get("completion_tokens") or 0)
-        text = data["choices"][0]["message"]["content"]
+        choice = data["choices"][0]
+        text = choice["message"].get("content") or ""
+        if full:
+            return {"text": text, "finish": choice.get("finish_reason")}
         return json.loads(text) if schema else text
 
     def generate(self, prompt: str, schema: dict | None = None):
