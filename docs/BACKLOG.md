@@ -37,7 +37,11 @@ local disks); then teams working on shared metadata with distributed compute.*
 - [ ] **WS P4** Pipeline on the workspace (stale-only, hash-named takes, dubs/ output); retire the job queue and old stages.
 - [x] **WS P5a** Lines too long to fit get shorter English from Gemma 4 on llama.cpp, translated again; versions stored and chosen in the Translate screen (decision 47, [SHORTEN.md](SHORTEN.md), branch `feat/shorten`).
 - [x] **WS P3a** `YT_COOKIES` in the notebooks: YouTube refused Colab's address on the first shortening test (2026-10-01); every yt-dlp call uses a private copy of the person's cookies.txt; guide in notebooks/README.md.
-- [ ] **WS P5a** Owner's Colab run: about 3 episodes of 6 Minute English with SHORTEN_WITH_LLM on and off; compare `shorten.json`, `fit.json` overflow, tokens/s; listen; set `MIN_SIM` from the meaning scores.
+- [x] **WS P5a** Colab run 1 (2026-10-01, 3 × 6ME, T4, 49 min): prediction confirmed (takes 5.88 syl/s vs 6.0 assumed); 109 tight lines but only 16 shortened (answers cut short at the token limit, 28 tok/s with a JSON grammar) → plain-line answers, retry, raw answers kept (`fix/shorten-answers`).
+- [ ] **WS P5a** Owner's Colab run 2: about 3 episodes of 6 Minute English with SHORTEN_WITH_LLM on and off; compare `shorten.json`, `fit.json` overflow, tokens/s; listen; set `MIN_SIM` from the meaning scores.
+- [ ] **MIX P0** The dub drifts behind the video: `mix.fit` starts each line after the previous take ends, so one overflow delays every later line (Colab run 2026-10-01, 6 Minute English: 15–33 s late by the end, 77/77 lines "overflow"). Needs a re-sync rule (owner to choose): e.g. never start more than ~0.5 s late, squeeze harder or cross-fade to catch up at pauses.
+- [ ] **VOICE** Lines of speakers without a voice bank get no take at all (4 lines in "Who does the housework?"): on the native path, voice them natively (no conversion) instead of leaving silence.
+- [ ] **RES** A second workspace in the same Colab session keeps the first one's model cache (`LB_CACHE` set once per session; HF_HOME fixed at import).
 - [ ] **WS P5b** A rescue pass after voicing for lines whose real take still overflows (measured, not predicted).
 - [ ] **WS P5c** Target-side shortening for chosen languages (built into the plan, off everywhere); Amharic after E3.
 - [ ] **WS P5** E3 bench, then Gemma chapters (embeddings + pauses propose, the model adjusts by line number and writes title/summary/key terms) + translation loop options.
