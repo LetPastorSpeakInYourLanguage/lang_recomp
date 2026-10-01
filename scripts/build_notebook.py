@@ -33,6 +33,8 @@ def cell(kind: str, src: str, form: bool = False) -> dict:
 MACHINE = """
 HF_TOKEN = ""  #@param {type:"string"}
 #@markdown Your [Hugging Face token](https://huggingface.co/settings/tokens) (write access if you use a bucket). **Never share or commit this notebook with a token filled in.**
+YT_COOKIES = ""  #@param {type:"string"}
+#@markdown Only if YouTube refuses this machine ("Sign in to confirm you're not a bot", common on Colab and Kaggle): a `cookies.txt` exported from a browser signed in to YouTube, e.g. `/content/drive/MyDrive/LangBridge/cookies.txt` (how: notebooks/README.md). Treat it like a password.
 DEVICE = "auto"  #@param ["auto", "cpu", "1 GPU", "2 GPUs"]
 #@markdown `auto`: every GPU there is (Kaggle T4 x2 → 2, Colab T4 → 1), else the CPU.
 WORK_DIR = ""  #@param {type:"string"}
@@ -147,7 +149,7 @@ RUN_FOLDER = ""  #@param {type:"string"}
     cell("code", """
 #@title Set up this machine
 from lb_worker import env
-M = env.setup(RUNTIME, ROOT, DEVICE, STORAGE, WORKSPACE, BUCKET, HF_TOKEN)
+M = env.setup(RUNTIME, ROOT, DEVICE, STORAGE, WORKSPACE, BUCKET, HF_TOKEN, yt_cookies=YT_COOKIES)
 """, form=True),
     cell("code", """
 #@title Run
@@ -207,7 +209,7 @@ BUCKET = ""  #@param {type:"string"}
 #@title Run the test
 from lb_worker import env
 from lb_worker.research import run_workspace
-M = env.setup(RUNTIME, ROOT, DEVICE, 'bucket', '', BUCKET, HF_TOKEN)
+M = env.setup(RUNTIME, ROOT, DEVICE, 'bucket', '', BUCKET, HF_TOKEN, yt_cookies=YT_COOKIES)
 result = run_workspace(M['workspace'], 'en', ['am'], {json.dumps(SIX_MINUTE[:2])}, bucket=M['bucket'],
                        hf_token=M['token'], options=M['options'])
 """, form=True),
@@ -245,7 +247,7 @@ RUN_IDENTITY = True  #@param {{type:"boolean"}}
     cell("code", """
 #@title Set up this machine
 from lb_worker import env
-M = env.setup(RUNTIME, ROOT, DEVICE, 'folder', str(ROOT / 'lb-bench'), '', HF_TOKEN)
+M = env.setup(RUNTIME, ROOT, DEVICE, 'folder', str(ROOT / 'lb-bench'), '', HF_TOKEN, yt_cookies=YT_COOKIES)
 OUT = str(M['workspace'])  # results: lb-bench in WORK_DIR
 os.environ.setdefault('LB_CACHE', OUT + '/cache')
 """, form=True),

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import importlib
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 _done: set[str] = set()
@@ -17,6 +19,25 @@ def cache_dir(name: str) -> Path:
     p = Path(os.environ.get("LB_CACHE", Path.home() / ".langbridge_cache")) / name
     p.mkdir(parents=True, exist_ok=True)
     return p
+
+
+def yt_cookies() -> list[str]:
+    """yt-dlp's ``--cookies`` when the person gave a YouTube cookies file (YT_COOKIES in the
+    notebook, ``LB_YT_COOKIES`` in the environment): YouTube asks Colab's and Kaggle's
+    addresses to sign in. yt-dlp writes refreshed cookies back to its file, so it gets a
+    private copy and the person's file is never changed."""
+    src = os.environ.get("LB_YT_COOKIES", "").strip()
+    if not src or not Path(src).is_file():
+        return []
+    local = Path(tempfile.gettempdir()) / "lb_yt_cookies.txt"
+    if not local.exists():
+        shutil.copyfile(src, local)
+    return ["--cookies", str(local)]
+
+
+SIGN_IN_HINT = ("YouTube asks this machine to sign in (Colab and Kaggle addresses often are): set YT_COOKIES "
+                "in the notebook to a cookies file exported from your browser (notebooks/README.md), or put "
+                "the videos in the workspace folder")
 
 
 def ensure(*pip_specs: str, probe: str | None = None) -> None:

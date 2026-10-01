@@ -40,7 +40,7 @@ from pathlib import Path
 
 from .. import asr, batch_asr
 from .. import native_vc as NV
-from ..deps import cache_dir, ensure, gpu_count
+from ..deps import cache_dir, ensure, gpu_count, yt_cookies
 from ..registry import stage
 
 STAGES = ["fetch", "transcribe", "translate", "voice", "mix"]
@@ -298,7 +298,8 @@ class Run:
         url = self.app.project.get(pid)["source"]
         for kind, flag in (("manual", "--write-subs"), ("auto", "--write-auto-subs")):
             subprocess.run([sys.executable, "-m", "yt_dlp", "--skip-download", flag, "--sub-langs", "en.*,en",
-                            "--sub-format", "vtt", "-o", str(dest / "captions"), "--", url], capture_output=True, text=True)
+                            "--sub-format", "vtt", "-o", str(dest / "captions"), *yt_cookies(), "--", url],
+                           capture_output=True, text=True)
             got = sorted(dest.glob("captions*.vtt"))
             if got:
                 got[0].replace(dest / "captions.vtt")

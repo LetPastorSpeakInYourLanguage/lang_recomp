@@ -46,12 +46,30 @@ Colab's or Kaggle's secret stores.
 | `LANGUAGE`, `TARGETS` | the videos' language (it must match an existing workspace's; if not, the run stops and says so) and the languages to dub into. Targets not in the workspace's list are done too, with a warning |
 | `STAGES`, `DUB_LIMIT`, `LIMIT` | which stages; dub only the first N videos; work on only the first N |
 | `ASR_MODELS`, `ALIGNERS` | a recogniser / word aligner per language (`lang=repo`) |
+| `VOICE` | `native` (a native speaker's voice, then the character's voice with Seed-VC; decision 46) or `clone` |
+| `SHORTEN_WITH_LLM`, `LLM_MODEL` | on (the default): lines whose translation is too long for its place get shorter English from a local Gemma 4, translated again ([docs/SHORTEN.md](../docs/SHORTEN.md)); `auto` = E4B on a GPU, E2B on a CPU |
 | `CAPTIONS`, `ALIGN_CAPTIONS` | YouTube only: compare YouTube's captions with Whisper, in `report.json` |
 | `RUN_FOLDER` | continue a run: `runs/<run>` (in the workspace's `.lb/`), or a full path |
 | `HF_TOKEN` | a [Hugging Face token](https://huggingface.co/settings/tokens): read access, plus write access to your bucket. First accept the terms of `pyannote/speaker-diarization-community-1` on huggingface.co |
+| `YT_COOKIES` | only if YouTube refuses the machine (below): a `cookies.txt` file, e.g. on Drive |
 | `DEVICE` | `auto` (every GPU there is), `cpu`, `1 GPU`, `2 GPUs` |
 | `WORK_DIR` | code, models and scratch files. Empty: `/kaggle/working`, `/content`, or `~/lang-bridge` |
 | `CODE_BRANCH` | the branch of the code to run (default `main`) |
+
+### When YouTube says "Sign in to confirm you're not a bot"
+
+YouTube often refuses Colab's and Kaggle's addresses. Either put the videos in the workspace
+folder yourself, or give the notebook your browser's YouTube cookies:
+
+1. Use a spare Google account if you can: YouTube may flag an account used from a server.
+2. Open a **private/incognito window**, sign in to YouTube there, then open `https://www.youtube.com/robots.txt` in the same tab.
+3. Export the cookies with a browser extension such as **Get cookies.txt LOCALLY** (Netscape format) and save the file as `cookies.txt`.
+4. **Close the private window** without signing out (signing out or browsing on cancels the cookies).
+5. Upload `cookies.txt` to your Drive, e.g. `MyDrive/LangBridge/cookies.txt`, and set
+   `YT_COOKIES = "/content/drive/MyDrive/LangBridge/cookies.txt"`.
+
+The file lets anyone use that YouTube session: never share it or put it in a workspace other
+people sync. The notebook reads it and never changes it (yt-dlp gets a private copy).
 
 Then **Run all**. The *Set up this machine* cell prints what will be used (runtime, GPUs,
 memory, disk, where results go) and warns about anything missing. For example, on Kaggle

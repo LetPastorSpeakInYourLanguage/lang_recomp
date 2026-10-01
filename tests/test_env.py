@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "worker"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from lb_worker import env, research  # noqa: E402
+from lb_worker import deps, env, research  # noqa: E402
 
 import build_notebook  # noqa: E402
 
@@ -21,7 +21,7 @@ T4 = {"name": "Tesla T4", "memory_gb": 15.0}
 
 @pytest.fixture
 def clean_env(monkeypatch):
-    for k in ("KAGGLE_KERNEL_RUN_TYPE", "CUDA_VISIBLE_DEVICES", "LB_WORK", "HF_TOKEN"):
+    for k in ("KAGGLE_KERNEL_RUN_TYPE", "CUDA_VISIBLE_DEVICES", "LB_WORK", "HF_TOKEN", "LB_YT_COOKIES"):
         monkeypatch.delenv(k, raising=False)
     return monkeypatch
 
@@ -117,6 +117,21 @@ def test_setup_token_from_environment(tmp_path, clean_env):
     assert m["token"] == "hf_fromserver"
 
 
+def test_youtube_cookies_are_checked_and_only_a_copy_is_used(tmp_path, clean_env):
+    with pytest.raises(SystemExit, match="YT_COOKIES"):
+        _setup(tmp_path, clean_env, workspace=str(tmp_path / "ws"), yt_cookies=str(tmp_path / "missing.txt"))
+    jar = tmp_path / "cookies.txt"
+    jar.write_text("# Netscape HTTP Cookie File\n")
+    clean_env.setattr(deps.tempfile, "gettempdir", lambda: str(tmp_path / "tmp"))
+    (tmp_path / "tmp").mkdir()
+    _, log = _setup(tmp_path, clean_env, workspace=str(tmp_path / "ws"), yt_cookies=str(jar))
+    assert os.environ["LB_YT_COOKIES"] == str(jar) and "cookies" in log
+    args = deps.yt_cookies()
+    assert args[0] == "--cookies" and Path(args[1]) != jar and Path(args[1]).read_text() == jar.read_text()
+    _setup(tmp_path, clean_env, workspace=str(tmp_path / "ws"))  # cleared again: no cookies
+    assert deps.yt_cookies() == []
+
+
 def test_readonly_workspace():
     with pytest.raises(SystemExit, match="read-only"):
         env.check_folder(Path("/kaggle/input/videos"))
@@ -156,3 +171,20 @@ def test_get_code_uses_this_checkout(tmp_path, monkeypatch):
     exec(build_notebook.GET_CODE, ns)
     assert ns["RUNTIME"] == "local" and ns["CODE"] == ROOT and ns["ROOT"] == tmp_path
     assert not (tmp_path / "lang_recomp").exists()
+
+
+def test_a_download_youtube_refuses_says_how_to_fix_it(tmp_path, monkeypatch):
+    from lb_worker.stages import bulk
+
+    tries = []
+
+    def refuse(cmd, **k):
+        tries.append(cmd)
+        return type("P", (), {"returncode": 1, "stdout": "", "stderr": "ERROR: Sign in to confirm you're not a bot"})()
+
+    monkeypatch.setattr(bulk.subprocess, "run", refuse)
+    monkeypatch.setattr(bulk, "_js_runtime", lambda: None)
+    monkeypatch.setenv("LB_YT_COOKIES", "")
+    with pytest.raises(RuntimeError, match="YT_COOKIES"):
+        bulk.fetch({"id": "x", "url": "https://youtu.be/x"}, tmp_path, 720)
+    assert len(tries) == 1  # no pointless retries

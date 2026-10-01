@@ -121,15 +121,23 @@ def expand_link(link: str, limit: int = 500) -> list[dict]:
     (oldest first) for a playlist or a channel, on YouTube or any site yt-dlp knows."""
     from app import feeds
 
+    from .deps import SIGN_IN_HINT, yt_cookies
+    from .stages.bulk import _js_runtime
+
+    runtime = _js_runtime()
+    err = ""
     try:
         p = subprocess.run([sys.executable, "-m", "yt_dlp", "--flat-playlist", "-J", "--no-warnings",
-                            "--playlist-end", str(limit), "--", link],
+                            "--playlist-end", str(limit), *yt_cookies(),
+                            *(["--js-runtimes", runtime] if runtime else []), "--", link],
                            capture_output=True, text=True, encoding="utf-8", timeout=300)
         js = json.loads(p.stdout) if p.returncode == 0 and p.stdout.strip() else None
+        err = p.stderr or ""
     except (OSError, subprocess.TimeoutExpired, ValueError):
         js = None
     if js is None:  # not listable now: keep the link; the fetch stage reports what is wrong
-        print(f"could not look up {link}; it is kept and fetched as it is", flush=True)
+        print(f"could not look up {link}; it is kept and fetched as it is"
+              + (f" ({SIGN_IN_HINT})" if "Sign in to confirm" in err or "not a bot" in err else ""), flush=True)
         return [{"id": link.rsplit("=", 1)[-1][-11:], "title": link, "url": link}]
     if js.get("_type") == "playlist" or js.get("entries") is not None:
         entries = feeds.parse(js)["entries"]

@@ -26,7 +26,7 @@ import sys
 import time
 from pathlib import Path
 
-from ..deps import ensure
+from ..deps import SIGN_IN_HINT, ensure, yt_cookies
 from ..registry import stage
 from .align import align_doc, load_aligner
 from .analysis import _ffmpeg, _write, diarize_wav, load_pyannote, load_whisper, stamp_speakers, transcribe
@@ -85,7 +85,7 @@ def fetch(it: dict, dest: Path, height: int, log=print) -> Path:
     tmp = dest / "video.part.mp4"
     cmd = [sys.executable, "-m", "yt_dlp", "-f", f"bv*[height<={height}]+ba/b[height<={height}]/b",
            "--merge-output-format", "mp4", "--retries", "10", "--fragment-retries", "10",
-           "--no-playlist", "--force-overwrites", "-o", str(tmp)]
+           "--no-playlist", "--force-overwrites", "-o", str(tmp), *yt_cookies()]
     runtime = _js_runtime()
     if runtime:
         cmd += ["--js-runtimes", runtime]
@@ -100,7 +100,7 @@ def fetch(it: dict, dest: Path, height: int, log=print) -> Path:
             return video
         last = (p.stderr or p.stdout)[-800:]
         if "Sign in to confirm" in last or "not a bot" in last:
-            break  # YouTube refuses this machine: retrying will not help
+            raise RuntimeError(SIGN_IN_HINT)  # YouTube refuses this machine: retrying will not help
         log(f"{it['id']}: download attempt {attempt + 1} failed; retrying")
         time.sleep(10 * (attempt + 1))
     raise RuntimeError(f"download failed: {last.strip()}")

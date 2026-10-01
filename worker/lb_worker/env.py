@@ -171,7 +171,7 @@ def card(rt: str, root: Path, found: list[dict], n_gpus: int, storage: str, work
 
 
 def setup(rt: str, root: Path, device: str = "auto", storage: str = "folder", workspace: str = "",
-          bucket: str = "", token: str = "", log=print) -> dict:
+          bucket: str = "", token: str = "", log=print, yt_cookies: str = "") -> dict:
     """Everything the run needs from this machine, checked before any work starts.
 
     Every run has a workspace, the team's working folder, even when all its videos come
@@ -196,8 +196,15 @@ def setup(rt: str, root: Path, device: str = "auto", storage: str = "folder", wo
     if bucket and not token:
         raise SystemExit("A bucket needs HF_TOKEN: a Hugging Face token that can write to it.")
     root.mkdir(parents=True, exist_ok=True)
+    yt_cookies = (yt_cookies or "").strip()
     if rt == "colab":
-        mount_drive(workspace)
+        mount_drive(workspace, yt_cookies)
+    if yt_cookies:
+        if not Path(yt_cookies).expanduser().is_file():
+            raise SystemExit(f"YT_COOKIES: no file at {yt_cookies} (a cookies.txt exported from your browser).")
+        os.environ["LB_YT_COOKIES"] = str(Path(yt_cookies).expanduser())
+    else:  # cleared since an earlier setup in this session
+        os.environ.pop("LB_YT_COOKIES", None)
     found = gpus()
     n, warnings = choose_device(device, rt, found)
     apply_device(n, len(found))
@@ -210,7 +217,8 @@ def setup(rt: str, root: Path, device: str = "auto", storage: str = "folder", wo
     os.environ["LB_WORK"] = str(root / "scratch")
     if token:
         os.environ["HF_TOKEN"] = token
-    log(card(rt, root, found, n, storage, ws, bucket, token))
+    log(card(rt, root, found, n, storage, ws, bucket, token)
+        + (f"\nYouTube   signed in with the cookies in {yt_cookies}" if yt_cookies else ""))
     for w in warnings:
         log("⚠ " + w)
     return {"runtime": rt, "root": root, "workspace": ws, "bucket": bucket, "token": token, "gpus": n,
